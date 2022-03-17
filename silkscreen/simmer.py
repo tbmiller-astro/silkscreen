@@ -5,11 +5,43 @@ import numpy as np
 import glob
 from collections import Iterable
 import torch
-
+import os
 
 class ArtpopSrcLoader():
-    def __init__(self, phot_system, v_over_vcrit=0.4, ab_or_vega='ab', mag_limit=None, mag_limit_band=None, imf = 'kroupa',im_dim = 151, pixel_scale = 0.168):
-        """ Class to load all isochrones into memory"""
+    def __init__(self, 
+                phot_system, 
+                v_over_vcrit=0.4, 
+                ab_or_vega='ab',
+                mag_limit=None, 
+                mag_limit_band=None, 
+                imf = 'kroupa',
+                im_dim = 151, 
+                pixel_scale = 0.168):
+        """ 
+        Class to load all isochrones into memory, wrapping Artpop
+        
+        Parameters
+        ----------
+        phot_system: str
+            photometric system as used by artpop -- must be in the dictionary defined by artpop.filters.get_filter_names()
+        v_over_vcrit: float, optional (default: 0.4)
+            Parameter needed for MIST isochrones.
+        ab_or_vega: str, optional (default: 'ab')
+            whether to use ab or vega magnitudes. Options are 'ab' or 'vega'.
+        mag_limit: float, optional (default: None)
+            Magnitude limit for which to resolve individual stars. 
+            Stars below this magnitude are not individually sampled and are estimated by a 
+            smooth component. By default, all stars are simulated.
+        mag_limit_band: str, optional (default: None)
+            Band in which the mag limit is calculated / applied.
+        imf: str, optional (default: 'kroupa')
+            IMF to sample stars from. Options include 'kroupa', 'chabrier'. 
+        im_dim: int, optional (default: 151)
+            dimensions of the generated images. Images must be square.
+        pixel_scale: float, optional (default: 0.168)
+            pixel scale to apply to the image, in arcseconds per pixel. Set to depreciate 
+            (and be set automatically).
+        """
         #Set up all variables
         self.phot_system = phot_system
         self.v_over_vcrit = v_over_vcrit
@@ -108,19 +140,71 @@ class ArtpopSrcLoader():
         ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * dist*1e3
 
         #Generate artpop SSP
-        ssp_cur = artpop.populations.SSP(iso_cur, total_mass=10**log_Ms,
-                 distance=dist, mag_limit=self.mag_limit, mag_limit_band=self.mag_limit_band,
-                 imf=self.imf, add_remnants=True, random_state=None)
+        ssp_cur = artpop.populations.SSP(iso_cur, 
+                                        total_mass=10**log_Ms,
+                                        distance=dist, 
+                                        mag_limit=self.mag_limit, 
+                                        mag_limit_band=self.mag_limit_band,
+                                        imf=self.imf, 
+                                        add_remnants=True, 
+                                        random_state=None)
 
-        source_cur = artpop.source.SersicSP(ssp_cur, ser_param['r_eff_kpc'], ser_param['n'], ser_param['theta'],  ser_param['ellip'], self.im_dim, self.pixel_scale,
-                 num_r_eff=10, dx=0, dy=0, labels=None)
+        source_cur = artpop.source.SersicSP(ssp_cur, 
+                                            ser_param['r_eff_kpc'], 
+                                            ser_param['n'], 
+                                            ser_param['theta'],  
+                                            ser_param['ellip'], 
+                                            self.im_dim, 
+                                            self.pixel_scale,
+                                            num_r_eff=10, 
+                                            dx=0, 
+                                            dy=0, 
+                                            labels=None)
         return source_cur
 
 class ArtpopSimmer(ArtpopSrcLoader):
     "Class to produce many artpop simulations"
-    def __init__(self, imager,filters,exp_time,im_dim, pixel_scale, mag_limit = None, mag_limit_band = None,sky_sb = 22,psf = None):
+    def __init__(self, 
+                imager,
+                filters,
+                exp_time,
+                im_dim, 
+                pixel_scale, 
+                mag_limit = None,
+                mag_limit_band = None,
+                sky_sb = 22,
+                psf = None):
+        '''
+        Initialize Class.
+
+        Parameters
+        ----------
+        imager: Artpop Imager object
+        filters: list
+            list of filters for images
+        exp_time: float
+            exposure time to use (seconds)
+        im_im: int
+            image dimensions
+        pixel_scale: float
+            pixel scale for the instrument 
+        mag_limit: float, optional (default: None)
+            Magnitude limit for which to resolve individual stars. 
+            Stars below this magnitude are not individually sampled and are estimated by a 
+            smooth component. By default, all stars are simulated.
+        mag_limit_band: str, optional (default: None)
+            Band in which the mag limit is calculated / applied.
+        sky_sb: float, optional (default: 22)
+            sky surface brightness to use, in mag/arcsec^2 
+        psf: artpop psf object, optional (default: None)
+            PSF to use. If none provided, a Moffat psf with a 0.7 arcsecond FWHM is used.
+        '''
         self.imager = imager
-        super().__init__(imager.phot_system, mag_limit=mag_limit, mag_limit_band=mag_limit_band, im_dim = im_dim, pixel_scale = pixel_scale)
+        super().__init__(imager.phot_system, 
+                        mag_limit=mag_limit, 
+                        mag_limit_band=mag_limit_band, 
+                        im_dim = im_dim, 
+                        pixel_scale = pixel_scale)
         self.num_filters = len(filters)
         self.filters = filters
 
@@ -134,13 +218,20 @@ class ArtpopSimmer(ArtpopSrcLoader):
         if isinstance(exp_time,Iterable): assert len(exp_time) == self.num_filters
         self.exp_time = exp_time
 
-        #Can pass 2D array for all filters or 3D array with seperate for each filter
+        #Can pass 2D array for all filters or 3D array with separate for each filter
         if psf is None:
             self.psf = artpop.moffat_psf(fwhm=0.7*u.arcsec,pixel_scale = pixel_scale)
         else:
             self.psf = psf
 
-    def image_sersic_ssp(self, log_Ms, dist, feh,log_age ,sersic_params = None, num_shuffle = 1,output = 'numpy'):
+    def image_sersic_ssp(self, 
+                        log_Ms,
+                        dist,
+                        feh,
+                        log_age,
+                        sersic_params = None,
+                        num_shuffle = 1,
+                        output = 'numpy'):
         src_cur = self.build_sersic_ssp(log_Ms, dist, feh, log_age, sersic_params = sersic_params)
 
         xy_to_shuffle = src_cur.xy.copy()
