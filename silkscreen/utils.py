@@ -1,11 +1,18 @@
-from sbi import utils
+from sbi import utils as sbi_utils
 from sbi.inference import posteriors
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import artpop
+import astropy.units as u
 
+def block_mean(x, num_block):
+    r1 = x.shape[1]%num_block
+    r2 = x.shape[2]%num_block
+    x = x[:,:-r1,:-r2]
+    x = x.reshape(x.shape[0],int(x.shape[1]/num_block), num_block,int(x.shape[2]/num_block), num_block)
+    return x.mean(axis = (2,4) )
 
 #Basic function to reutrn common imagres
 def get_DECam_imager():
@@ -14,7 +21,7 @@ def get_DECam_imager():
 def get_HSC_imager():
     return artpop.image.ArtImager('HSC', diameter = 8.4*u.m, read_noise = 4.5)
 
-def get_injec_cutouts(files,num, size,output = 'numpy'):
+def get_injec_cutouts(files,num, size,output = 'numpy', pad = 5):
     #function to create cutouts to inject real images into
 
     #Load large observed images
@@ -31,8 +38,8 @@ def get_injec_cutouts(files,num, size,output = 'numpy'):
     y = np.arange(0,size[1])
     X,Y = np.meshgrid(x,y)
 
-    inds_X = X + np.random.randint(low = 5,high = x_max - size[0]-5, size = num)[:,None,None]
-    inds_Y = Y + np.random.randint(low = 5,high = y_max - size[1]-5, size = num)[:,None,None]
+    inds_X = X + np.random.randint(low = pad,high = x_max - size[0]-pad, size = num)[:,None,None]
+    inds_Y = Y + np.random.randint(low = pad,high = y_max - size[1]-pad, size = num)[:,None,None]
 
     #Extract cutouts
     cutouts = obs_ims[:,inds_X,inds_Y]
@@ -51,7 +58,7 @@ def load_post(prior, enet, state_dict, im_shape, flow = 'maf'):
     x_start = torch.ones((2,*im_shape))
 
     #initialize model
-    nde = utils.posterior_nn(model=flow, embedding_net=enet,z_score_theta = False,z_score_x = False)
+    nde = sbi_utils.posterior_nn(model=flow, embedding_net=enet,z_score_theta = False,z_score_x = False)
     net = nde(t_start,x_start)
 
     #Load trained parameters
