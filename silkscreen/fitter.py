@@ -53,7 +53,7 @@ class SilkScreenFitter():
                 proposal = self.posteriors[-1].set_default_x(self.x_obs.view(1,*self.x_shape ))
 
             #Can also use pre-simulated images from file for initial round
-            if pre_simulated_file is not None and r==0:
+            if pre_simulated_file is not None and r == 0:
                 theta_cur,x_cur = torch.load(pre_simulated_file)
 
             else:
