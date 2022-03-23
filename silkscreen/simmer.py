@@ -3,6 +3,7 @@ import artpop
 import astropy.units as u
 import numpy as np
 import glob
+import copy
 from collections import Iterable
 import torch
 import os
@@ -133,13 +134,11 @@ class ArtpopSrcLoader():
         #Calc Isochrone
         iso_cur = self.fetch_iso(log_age,feh)
 
-        if sersic_params is not None:
-            ser_param = sersic_params.copy()
-        else:
-            ser_param = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0}
+        ser_param = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
+        ser_param.update(sersic_params)
 
         ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * dist*1e3
-
+        
         #Generate artpop SSP
         ssp_cur = artpop.populations.SSP(iso_cur,
                                         total_mass=10**log_Ms,
@@ -158,8 +157,8 @@ class ArtpopSrcLoader():
                                             self.im_dim,
                                             self.pixel_scale,
                                             num_r_eff=10,
-                                            dx=0,
-                                            dy=0,
+                                            dx=ser_param['dx'],
+                                            dy=ser_param['dy'],
                                             labels=None)
         return source_cur
 
@@ -174,6 +173,7 @@ class ArtpopSimmer(ArtpopSrcLoader):
                 mag_limit = None,
                 mag_limit_band = None,
                 sky_sb = 22,
+                zpt = 27,
                 psf = None):
         '''
         Initialize Class.
@@ -214,7 +214,10 @@ class ArtpopSimmer(ArtpopSrcLoader):
         #Can pass constant or list with len == num_filters
         if isinstance(sky_sb,Iterable): assert len(sky_sb) == self.num_filters
         self.sky_sb = sky_sb
-
+        
+        if isinstance(zpt,Iterable): assert len(zpt) == self.num_filters
+        self.zpt = zpt
+        
         #Can pass constant or list with len == num_filters
         if isinstance(exp_time,Iterable): assert len(exp_time) == self.num_filters
         self.exp_time = exp_time
@@ -233,6 +236,7 @@ class ArtpopSimmer(ArtpopSrcLoader):
                         sersic_params = None,
                         num_shuffle = 1,
                         output = 'numpy'):
+        
         src_cur = self.build_sersic_ssp(log_Ms, dist, feh, log_age, sersic_params = sersic_params)
 
         xy_to_shuffle = src_cur.xy.copy()
@@ -247,11 +251,41 @@ class ArtpopSimmer(ArtpopSrcLoader):
                 cur_exp_time = self.exp_time[j] if isinstance(self.exp_time,Iterable) else self.exp_time
                 cur_sky_sb =  self.sky_sb[j] if isinstance(self.sky_sb,Iterable) else self.sky_sb
                 cur_psf = self.psf[j] if self.psf.ndim>2 else self.psf
+                cur_zpt = self.zpt[j] if isinstance(self.zpt,Iterable) else self.zpt
 
                 im_cur = self.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = cur_sky_sb)
                 cur_shuf_list.append(im_cur.image)
 
             img_list.append(cur_shuf_list)
+        img_list = np.asarray(img_list).squeeze()
+        if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
+        return img_list
+    
+    def image_sersic_ssp_for_injec(self, log_Ms, dist, feh,log_age ,sersic_params = None, num_shuffle = 1,output = 'numpy'):
+        #Same as above but turn off read noise and sky_SB, these will be accounted for once injected
+        rn_save = copy.deepcopy(self.imager.read_noise)
+        self.imager.readnoise = 0
+        
+        src_cur = self.build_sersic_ssp(log_Ms, dist, feh, log_age, sersic_params = sersic_params)
+
+        xy_to_shuffle = src_cur.xy.copy()
+
+        img_list = []
+        for i in range(num_shuffle):
+            cur_shuf_list = []
+            np.random.shuffle(xy_to_shuffle)
+            src_cur.xy = xy_to_shuffle
+            for j,filt_cur in enumerate(self.filters):
+
+                cur_exp_time = self.exp_time[j] if isinstance(self.exp_time,Iterable) else self.exp_time
+                cur_psf = self.psf[j] if self.psf.ndim>2 else self.psf
+                cur_zpt = self.zpt[j] if isinstance(self.zpt,Iterable) else self.zpt
+
+                im_cur = self.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = None,zpt = cur_zpt)
+                cur_shuf_list.append(im_cur.image)
+
+            img_list.append(cur_shuf_list)
+        self.imager.readnoise = rn_save
         img_list = np.asarray(img_list).squeeze()
         if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
         return img_list

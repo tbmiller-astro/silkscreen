@@ -34,8 +34,12 @@ class SilkScreenFitter():
         rounds = 1,
         num_sim = int(1e4),
         pre_simulated_file = None,
-        train_kwargs = {'training_batch_size': 64,'clip_max_norm': 5,'learning_rate':1e-4, 'validation_fraction':0.1}
+        train_kwargs = {}
         ):
+        
+        #Update any kwargs for infer.train
+        def_train_kwargs = {'training_batch_size': 64,'clip_max_norm': 5,'learning_rate':1e-4, 'validation_fraction':0.1}
+        def_train_kwargs.update(train_kwargs)
 
         ##Don't strictly need simulator but need to provide pre-sim and can't do more than one round
         if self.has_sim_function == False:
@@ -81,7 +85,7 @@ class SilkScreenFitter():
                 self.inference._x_roundwise[j] = self.inference._x_roundwise[j].to('cpu')
                 self.inference._theta_roundwise[j] = self.inference._theta_roundwise[j].to('cpu')
 
-            density_estimator = self.inference.train(**train_kwargs)
+            density_estimator = self.inference.train(**def_train_kwargs)
             posterior = self.inference.build_posterior(density_estimator)
             self.posteriors.append(posterior)
         return posterior

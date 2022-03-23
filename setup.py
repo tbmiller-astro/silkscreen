@@ -5,7 +5,7 @@ with open('requirements.txt') as infd:
     print(INSTALL_REQUIRES)
 
 def readme():
-    with open('README.rst') as f:
+    with open('README.md') as f:
         return f.read()
 
 setuptools.setup(
