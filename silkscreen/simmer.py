@@ -9,7 +9,7 @@ import torch
 import os
 from astropy.table import Table
 
-class ArtpopSrcLoader():
+class ArtpopIsoLoader():
     def __init__(self,
                 phot_system,
                 v_over_vcrit=0.4,
@@ -128,17 +128,10 @@ class ArtpopSrcLoader():
             log_L = iso['log_L'],
             log_Teff = iso['log_Teff'],)
 
-    def build_sersic_ssp(self, log_Ms, dist,  feh, log_age,sersic_params = None):
-        #Copied from artpop
+    def build_ssp(self, log_Ms, dist,  feh, log_age):
 
-        #Calc Isochrone
         iso_cur = self.fetch_iso(log_age,feh)
 
-        ser_param = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
-        ser_param.update(sersic_params)
-
-        ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * dist*1e3
-        
         #Generate artpop SSP
         ssp_cur = artpop.populations.SSP(iso_cur,
                                         total_mass=10**log_Ms,
@@ -148,6 +141,19 @@ class ArtpopSrcLoader():
                                         imf=self.imf,
                                         add_remnants=True,
                                         random_state=None)
+        return ssp_cur
+
+    def build_sersic_ssp(self, log_Ms, dist,  feh, log_age,sersic_params = None):
+        #Copied from artpop
+
+        ssp_cur = self.build_ssp(log_Ms, dist,  feh, log_age)
+
+        ser_param = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
+        ser_param.update(sersic_params)
+
+        ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * dist*1e3
+
+        #Generate artpop SSP
 
         source_cur = artpop.source.SersicSP(ssp_cur,
                                             ser_param['r_eff_kpc'],
@@ -162,19 +168,19 @@ class ArtpopSrcLoader():
                                             labels=None)
         return source_cur
 
-class ArtpopSimmer(ArtpopSrcLoader):
-    "Class to produce many artpop simulations"
+class ArtpopSimmer(ArtpopIsoLoader):
+    "Base Class to produce many artpop simulations"
     def __init__(self,
                 imager,
                 filters,
                 exp_time,
                 im_dim,
                 pixel_scale,
-                mag_limit = None,
-                mag_limit_band = None,
-                sky_sb = 22,
-                zpt = 27,
-                psf = None):
+                mag_limit,
+                mag_limit_band,
+                sky_sb,
+                zpt,
+                psf):
         '''
         Initialize Class.
 
@@ -214,10 +220,10 @@ class ArtpopSimmer(ArtpopSrcLoader):
         #Can pass constant or list with len == num_filters
         if isinstance(sky_sb,Iterable): assert len(sky_sb) == self.num_filters
         self.sky_sb = sky_sb
-        
+
         if isinstance(zpt,Iterable): assert len(zpt) == self.num_filters
         self.zpt = zpt
-        
+
         #Can pass constant or list with len == num_filters
         if isinstance(exp_time,Iterable): assert len(exp_time) == self.num_filters
         self.exp_time = exp_time
@@ -228,16 +234,16 @@ class ArtpopSimmer(ArtpopSrcLoader):
         else:
             self.psf = psf
 
-    def image_sersic_ssp(self,
-                        log_Ms,
-                        dist,
-                        feh,
-                        log_age,
-                        sersic_params = None,
+    def build_source(x):
+        ##Function which takes in array of values
+        return "Not Implemented yet"
+
+    def get_image(self,
+                        x,
                         num_shuffle = 1,
                         output = 'numpy'):
-        
-        src_cur = self.build_sersic_ssp(log_Ms, dist, feh, log_age, sersic_params = sersic_params)
+
+        src_cur = self.build_source(x)
 
         xy_to_shuffle = src_cur.xy.copy()
 
@@ -260,13 +266,16 @@ class ArtpopSimmer(ArtpopSrcLoader):
         img_list = np.asarray(img_list).squeeze()
         if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
         return img_list
-    
-    def image_sersic_ssp_for_injec(self, log_Ms, dist, feh,log_age ,sersic_params = None, num_shuffle = 1,output = 'numpy'):
+
+    def get_image_for_injec(self,
+                            x,
+                            num_shuffle = 1,
+                            output = 'numpy'):
         #Same as above but turn off read noise and sky_SB, these will be accounted for once injected
         rn_save = copy.deepcopy(self.imager.read_noise)
         self.imager.readnoise = 0
-        
-        src_cur = self.build_sersic_ssp(log_Ms, dist, feh, log_age, sersic_params = sersic_params)
+
+        src_cur = self.build_source(x)
 
         xy_to_shuffle = src_cur.xy.copy()
 
@@ -289,3 +298,77 @@ class ArtpopSimmer(ArtpopSrcLoader):
         img_list = np.asarray(img_list).squeeze()
         if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
         return img_list
+
+
+class SersicSSPSimmer(ArtpopSimmer):
+    "Class to simulate simple ssp with a sersic profile"
+    def __init__(self,
+                imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                sersic_params,
+                mag_limit = None,
+                mag_limit_band = None,
+                sky_sb = 22,
+                zpt = 27,
+                psf = None):
+
+        super().__init__(imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                mag_limit,
+                mag_limit_band,
+                sky_sb,
+                zpt,
+                psf)
+
+        self.sersic_params = sersic_params
+        # log Ms, Dist, Z and log age
+        self.N_free = 4
+        self.param_descrip = ['log Ms/Msun','D (Mpc)', 'Z','log Age (Gyr)']
+    def build_source(self, x):
+        "x is array with logMs,D,Z,logAge"
+        logMs, D, Z, logAge = x.tolist()
+        return self.build_sersic_ssp(logMs, D, Z, logAge,sersic_params = self.sersic_params)
+
+class SersicTwoSSPSimmer(ArtpopSimmer):
+    "Class to simulate a Two component ssp with a sersic profile"
+    def __init__(self,
+                imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                sersic_params,
+                mag_limit = None,
+                mag_limit_band = None,
+                sky_sb = 22,
+                zpt = 27,
+                psf = None):
+
+        super().__init__(imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                mag_limit,
+                mag_limit_band,
+                sky_sb,
+                zpt,
+                psf)
+
+        self.sersic_params = sersic_params
+        # log Ms, Dist, Z and log age
+        self.N_free = 7
+        self.param_descrip = ['log Ms/Msun','D (Mpc)', 'F_2', 'Z_1','log Age_1 (Gyr)', 'Z_2','log Age_2 (Gyr)']
+
+    def build_source(self, x):
+        logMs, D,F_2, Z_1, logAge_1,Z_2, logAge_2 = x.tolist()
+        F_1 = 1-F_2
+        src_1 = self.build_sersic_ssp(logMs+np.log(F_1), D, Z_1, logAge_1,sersic_params = self.sersic_params)
+        src_2 = self.build_sersic_ssp(logMs+np.log(F_2), D, Z_2, logAge_2,sersic_params = self.sersic_params)
+        return src_1 + src_2

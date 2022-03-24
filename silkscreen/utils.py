@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import artpop
 import astropy.units as u
 
+default_sersic_dict = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
 def block_mean(x, num_block):
     r1 = x.shape[1]%num_block
     r2 = x.shape[2]%num_block
