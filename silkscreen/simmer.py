@@ -176,11 +176,12 @@ class ArtpopSimmer(ArtpopIsoLoader):
                 exp_time,
                 im_dim,
                 pixel_scale,
-                mag_limit,
-                mag_limit_band,
-                sky_sb,
-                zpt,
-                psf):
+                mag_limit = None,
+                mag_limit_band = None,
+                sky_sb = 21,
+                zpt = 27,
+                psf =  None,
+                iso_kwargs = {}):
         '''
         Initialize Class.
 
@@ -201,17 +202,20 @@ class ArtpopSimmer(ArtpopIsoLoader):
             smooth component. By default, all stars are simulated.
         mag_limit_band: str, optional (default: None)
             Band in which the mag limit is calculated / applied.
-        sky_sb: float, optional (default: 22)
+        sky_sb: float, optional (default: 21)
             sky surface brightness to use, in mag/arcsec^2
         psf: artpop psf object, optional (default: None)
             PSF to use. If none provided, a Moffat psf with a 0.7 arcsecond FWHM is used.
+        iso_kwargs: dict, optional (default :None)
+            Additional keyword arguments to pass to ArtpopIsoLoader
         '''
         self.imager = imager
         super().__init__(imager.phot_system,
                         mag_limit=mag_limit,
                         mag_limit_band=mag_limit_band,
                         im_dim = im_dim,
-                        pixel_scale = pixel_scale)
+                        pixel_scale = pixel_scale,
+                        **iso_kwargs)
         self.num_filters = len(filters)
         self.filters = filters
 
@@ -235,13 +239,14 @@ class ArtpopSimmer(ArtpopIsoLoader):
             self.psf = psf
 
     def build_source(x):
-        ##Function which takes in array of values
+        ##Function which takes in array of values representing the free parameters
+        ## and return ArtPop Src object
         return "Not Implemented yet"
 
     def get_image(self,
-                        x,
-                        num_shuffle = 1,
-                        output = 'numpy'):
+                    x,
+                    num_shuffle = 1,
+                    output = 'numpy'):
 
         src_cur = self.build_source(x)
 
@@ -313,18 +318,20 @@ class SersicSSPSimmer(ArtpopSimmer):
                 mag_limit_band = None,
                 sky_sb = 22,
                 zpt = 27,
-                psf = None):
+                psf = None,
+                iso_kwargs = {}):
 
         super().__init__(imager,
                 filters,
                 exp_time,
                 im_dim,
                 pixel_scale,
-                mag_limit,
-                mag_limit_band,
-                sky_sb,
-                zpt,
-                psf)
+                mag_limit = mag_limit,
+                mag_limit_band = mag_limit_band,
+                sky_sb = sky_sb,
+                zpt = zpt,
+                psf = psf,
+                iso_kwargs = iso_kwargs)
 
         self.sersic_params = sersic_params
         # log Ms, Dist, Z and log age
@@ -369,6 +376,6 @@ class SersicTwoSSPSimmer(ArtpopSimmer):
     def build_source(self, x):
         logMs, D,F_2, Z_1, logAge_1,Z_2, logAge_2 = x.tolist()
         F_1 = 1-F_2
-        src_1 = self.build_sersic_ssp(logMs+np.log(F_1), D, Z_1, logAge_1,sersic_params = self.sersic_params)
-        src_2 = self.build_sersic_ssp(logMs+np.log(F_2), D, Z_2, logAge_2,sersic_params = self.sersic_params)
+        src_1 = self.build_sersic_ssp(logMs+np.log10(F_1), D, Z_1, logAge_1,sersic_params = self.sersic_params)
+        src_2 = self.build_sersic_ssp(logMs+np.log10(F_2), D, Z_2, logAge_2,sersic_params = self.sersic_params)
         return src_1 + src_2
