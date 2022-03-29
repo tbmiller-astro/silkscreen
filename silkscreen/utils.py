@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import artpop
 import astropy.units as u
+import numpy as np
 
 default_sersic_dict = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
 
@@ -52,7 +53,7 @@ def get_injec_cutouts(num, size,files = None, array = None ,output = 'numpy', pa
 
     cutouts = np.moveaxis(cutouts,0,1)
 
-    if output == 'torch': cutouts = torch.from_numpy(cutouts).type(torch.float)
+    if output == 'torch': cutouts = torch.from_numpy(cutouts.astype(np.float32)).type(torch.float)
     return cutouts
 
 def load_post(prior, enet, state_dict, im_shape, flow = 'maf'):
