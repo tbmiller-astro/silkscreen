@@ -1,7 +1,12 @@
+import torch
+
 from sbi import utils as sbi_utils
 from sbi.inference import posteriors
+from sbi.utils import BoxUniform
+from sbi.utils import process_prior
 
-import torch
+from scipy.stats import truncnorm
+
 import torch.nn as nn
 import torch.nn.functional as F
 import artpop
@@ -150,3 +155,60 @@ class Default_NN(nn.Module):
         x = x.view(-1,self.num_fc_input)
         x = self.fc_layers(x)
         return x
+class KirbyMZRPrior_class:
+    def __init__(self,Mlims, Dlims,logAgelims,device = 'cpu'):
+
+        self.unif_dist = BoxUniform(torch.Tensor([Mlims[0],Dlims[0],logAgelims[0]]),torch.Tensor([Mlims[1],Dlims[1],logAgelims[1]]) )
+        self.MZR_sig = 0.17
+        self.Z_min = -2.25
+        self.Z_max =0.25
+        self.device = device
+
+    def MZR(self, logM):
+        return -1.69 + 0.3*(logM - 6.)
+
+    def sample(self, sample_shape=torch.Size([])):
+
+        usamps = self.unif_dist.sample(sample_shape)
+        Z_mean = self.MZR(usamps.T[0])
+
+        a = (self.Z_min - Z_mean)/self.MZR_sig
+        b = (self.Z_max - Z_mean)/self.MZR_sig
+
+        Z_samps  =  truncnorm.ppf(np.random.uniform(size = sample_shape),a,b, Z_mean, self.MZR_sig )
+
+        if len(usamps.shape) == 1:
+            samps = torch.Tensor([usamps[0],usamps[1],Z_samps,usamps[2]] )
+        else:
+            samps = torch.vstack([usamps.T[:2],torch.from_numpy(Z_samps),usamps.T[2]]).T
+
+        return samps.to(self.device)
+
+    def log_prob(self, values):
+
+        values = values.to('cpu')
+        Z_mean = self.MZR(values.T[0])
+
+        a = (self.Z_min - Z_mean)/self.MZR_sig
+        b = (self.Z_max - Z_mean)/self.MZR_sig
+
+        if len(values.shape) == 1:
+            log_prob_Z = truncnorm.logpdf(values[2],a,b, Z_mean, self.MZR_sig )
+            log_prob_unif = self.unif_dist.log_prob(torch.hstack([values[:2],values[3:]]) )
+        else:
+            log_prob_Z = truncnorm.logpdf(values[:,2],a,b, Z_mean, self.MZR_sig )
+            log_prob_unif = self.unif_dist.log_prob(torch.hstack([values[:,:2],values[:,3:]]) )
+
+        log_prob = log_prob_unif+log_prob_Z
+
+        return log_prob.to(self.device)
+
+def get_MZR_prior(Mlims, Dlims,logAgelims,device = 'cpu'):
+    custom_prior = KirbyMZRPrior_class(Mlims, Dlims,logAgelims,device = device)
+    prior,_,_ = process_prior(
+        custom_prior,
+        custom_prior_wrapper_kwargs=
+          dict(lower_bound=torch.Tensor([Mlims[0],Dlims[0],-2.25,logAgelims[0]]).to(device),
+          upper_bound=torch.Tensor([Mlims[1],Dlims[1],0.25,logAgelims[1]]).to(device))
+        )
+    return prior
