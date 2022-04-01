@@ -276,9 +276,12 @@ class ArtpopSimmer(ArtpopIsoLoader):
                             x,
                             num_shuffle = 1,
                             output = 'numpy'):
-        #Same as above but turn off read noise and sky_SB, these will be accounted for once injected
-        rn_save = copy.deepcopy(self.imager.read_noise)
-        self.imager.readnoise = 0
+        # Same as above but us ideal imager instead
+        # This isn't truly correcy and will underestimate noise if galaxy counts ~ sky counts
+        # But for most of our setups this shouldn't be the case although important to check
+        # Could maybe add a option to use Poisson noise if neeeded
+
+        imager = artpop.IdealImager()
 
         src_cur = self.build_source(x)
 
@@ -291,11 +294,10 @@ class ArtpopSimmer(ArtpopIsoLoader):
             src_cur.xy = xy_to_shuffle
             for j,filt_cur in enumerate(self.filters):
 
-                cur_exp_time = self.exp_time[j] if isinstance(self.exp_time,Iterable) else self.exp_time
                 cur_psf = self.psf[j] if self.psf.ndim>2 else self.psf
                 cur_zpt = self.zpt[j] if isinstance(self.zpt,Iterable) else self.zpt
 
-                im_cur = self.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = None,zpt = cur_zpt)
+                im_cur = imager.observe(src_cur,filt_cur, psf = cur_psf,zpt = cur_zpt)
                 cur_shuf_list.append(im_cur.image)
 
             img_list.append(cur_shuf_list)
