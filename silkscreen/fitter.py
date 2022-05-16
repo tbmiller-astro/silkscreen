@@ -34,7 +34,8 @@ class SilkScreenFitter():
         rounds = 1,
         num_sim = int(1e4),
         pre_simulated_file = None,
-        train_kwargs = {}
+        train_kwargs = {},
+        append_sims_kwargs = {},
         ):
         
         #Update any kwargs for infer.train
@@ -78,14 +79,11 @@ class SilkScreenFitter():
                     theta_cur = a[:,None,:] *torch.ones(sim_function_kwargs['num_shuffle' ])[None,:,None]
                     theta_cur = theta_cur.view(x_cur.shape[0],-1)
 
-            self.inference = self.inference.append_simulations(theta_cur,x_cur)
-
-            #Work around for no when sbi v0.18 to make sure not too much mem used on gpu
-            for j in range( len(self.inference._x_roundwise) ):
-                self.inference._x_roundwise[j] = self.inference._x_roundwise[j].to('cpu')
-                self.inference._theta_roundwise[j] = self.inference._theta_roundwise[j].to('cpu')
-
+            self.inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
+            
             density_estimator = self.inference.train(**def_train_kwargs)
+            
             posterior = self.inference.build_posterior(density_estimator)
+            
             self.posteriors.append(posterior)
         return posterior

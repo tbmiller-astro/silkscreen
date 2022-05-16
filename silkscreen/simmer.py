@@ -181,7 +181,8 @@ class ArtpopSimmer(ArtpopIsoLoader):
                 sky_sb = 21,
                 zpt = 27,
                 psf =  None,
-                iso_kwargs = {}):
+                iso_kwargs = {},
+                extinction_reddening = None):
         '''
         Initialize Class.
 
@@ -237,6 +238,8 @@ class ArtpopSimmer(ArtpopIsoLoader):
             self.psf = artpop.moffat_psf(fwhm=0.7*u.arcsec,pixel_scale = pixel_scale)
         else:
             self.psf = psf
+        
+        self.extinction_reddening = extinction_reddening
 
     def build_source(x):
         ##Function which takes in array of values representing the free parameters
@@ -269,6 +272,9 @@ class ArtpopSimmer(ArtpopIsoLoader):
 
             img_list.append(cur_shuf_list)
         img_list = np.asarray(img_list).squeeze()
+        if self.extinction_reddening is not None:
+            img_list *= self.extinction_reddening[:,None,None]
+        
         if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
         return img_list
 
@@ -301,7 +307,9 @@ class ArtpopSimmer(ArtpopIsoLoader):
                 cur_shuf_list.append(im_cur.image)
 
             img_list.append(cur_shuf_list)
-        self.imager.readnoise = rn_save
+        
+        if self.extinction_reddening is not None:
+            img_list *= self.extinction_reddening[:,None,None]
         img_list = np.asarray(img_list).squeeze()
         if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
         return img_list
@@ -373,11 +381,95 @@ class SersicTwoSSPSimmer(ArtpopSimmer):
         self.sersic_params = sersic_params
         # log Ms, Dist, Z and log age
         self.N_free = 7
-        self.param_descrip = ['log Ms/Msun','D (Mpc)', 'F_2', 'Z_1','log Age_1 (Gyr)', 'Z_2','log Age_2 (Gyr)']
+        self.param_descrip = ['log Ms/Msun','D (Mpc)', 'F_1', 'Z_1','log Age_1 (Gyr)', 'Z_2','log Age_2 (Gyr)']
 
     def build_source(self, x):
-        logMs, D,F_2, Z_1, logAge_1,Z_2, logAge_2 = x.tolist()
-        F_1 = 1-F_2
+        logMs, D,F_1, Z_1, logAge_1,Z_2, logAge_2 = x.tolist()
+        F_2 = 1.-F_1
         src_1 = self.build_sersic_ssp(logMs+np.log10(F_1), D, Z_1, logAge_1,sersic_params = self.sersic_params)
         src_2 = self.build_sersic_ssp(logMs+np.log10(F_2), D, Z_2, logAge_2,sersic_params = self.sersic_params)
         return src_1 + src_2
+
+class SersicOMYSimmer(ArtpopSimmer):
+    "Class to simulate a three component ssp with a sersic profile"
+    def __init__(self,
+                imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                sersic_params,
+                mag_limit = None,
+                mag_limit_band = None,
+                sky_sb = 22,
+                zpt = 27,
+                psf = None):
+
+        super().__init__(imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                mag_limit,
+                mag_limit_band,
+                sky_sb,
+                zpt,
+                psf)
+
+        self.sersic_params = sersic_params
+        # log Ms, Dist, Z and log age
+        self.N_free = 7
+        self.param_descrip = ['D (Mpc)', 'logM_y','F_m', 'Z_y','log Age_y (Gyr)','logM_m', 'Z_m','log Age_m (Gyr)', 'logM_o','Z_o','log Age_o (Gyr)']
+
+    def build_source(self, x):
+        D,logM_y, Z_y, logAge_y,logM_m, Z_m, logAge_m,logM_o,Z_o, logAge_o = x.tolist()
+        
+        src_y = self.build_sersic_ssp(logM_y, D, Z_y, logAge_y,sersic_params = self.sersic_params)
+        src_m = self.build_sersic_ssp(logM_m, D, Z_m, logAge_m,sersic_params = self.sersic_params)
+        src_o = self.build_sersic_ssp(logM_o, D, Z_o, logAge_o,sersic_params = self.sersic_params)
+
+        return src_y + src_m + src_o
+
+class Sersic_Default_Simmer(ArtpopSimmer):
+    "Class to simulate a three component ssp with a sersic profile"
+    def __init__(self,
+                imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                sersic_params,
+                mag_limit = None,
+                mag_limit_band = None,
+                sky_sb = 22,
+                zpt = 27,
+                psf = None,
+                extinction_reddening = None):
+
+        super().__init__(imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                mag_limit,
+                mag_limit_band,
+                sky_sb,
+                zpt,
+                psf,
+                extinction_reddening = extinction_reddening)
+
+        self.sersic_params = sersic_params
+        self.N_free = 7
+        self.param_descrip = ['D (Mpc)', 'logMs','F_y', 'F_m','log Age_y (Gyr)','log Age_m (Gyr)', 'Z']
+
+    def build_source(self, x):
+        D,logM, f_y,f_m, logAge_y,logAge_m, Z = x.tolist()
+        
+        f_o = 1. - f_m
+        logAge_o = 10.
+        
+        src_y = self.build_sersic_ssp(logM+np.log10(f_y+1e-5), D, Z, logAge_y, sersic_params = self.sersic_params)
+        src_m = self.build_sersic_ssp(logM+np.log10(f_m+1e-5), D, Z, logAge_m, sersic_params = self.sersic_params)
+        src_o = self.build_sersic_ssp(logM+np.log10(f_o+1e-5), D, Z, logAge_o, sersic_params = self.sersic_params)
+
+        return src_y + src_m + src_o
