@@ -55,7 +55,7 @@ class SilkScreenFitter():
             if r == 0:
                 proposal = self.prior
             else:
-                proposal = self.posteriors[-1].set_default_x(self.x_obs.view(1,*self.x_shape ))
+                proposal = self.posteriors[-1].set_default_x(self.x_obs[None])
 
             #Can also use pre-simulated images from file for initial round
             if pre_simulated_file is not None and r == 0:
@@ -73,17 +73,48 @@ class SilkScreenFitter():
                     x_cur.append(self.sim_function(theta, **self.sim_function_kwargs)[None])
 
                 x_cur = torch.vstack(x_cur)
-
+                
                 ## make sure number of thetas matches if shuffled images.
                 if 'num_shuffle' in self.sim_function_kwargs:
                     theta_cur = a[:,None,:] *torch.ones(sim_function_kwargs['num_shuffle' ])[None,:,None]
                     theta_cur = theta_cur.view(x_cur.shape[0],-1)
-
+            
+            print (x_cur.shape,theta_cur.shape)
+            append_sims_kwargs.update({'proposal':proposal})
+            
             self.inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
-            
             density_estimator = self.inference.train(**def_train_kwargs)
-            
+            # Return Posterior
             posterior = self.inference.build_posterior(density_estimator)
-            
             self.posteriors.append(posterior)
+            torch.cuda.empty_cache()
         return posterior
+    
+    def save_simulations(self,file_name,rounds):
+        if isinstance(rounds,Iterable):
+            theta = []
+            x = []
+            for r in rounds:
+                theta.append( self.inference._dataset.datasets[r].tensors[0].to('cpu') )
+                x.append (self.inference._dataset.datasets[r].tensors[1].to('cpu') )
+            theta = torch.stack(theta)
+            x = torch.stack(x)
+        else:
+            theta = self.inference._dataset.datasets[rounds].tensors[0].to('cpu') 
+            x = self.inference._dataset.datasets[rounds].tensors[1].to('cpu') 
+        torch.save([theta,x],'a')
+
+'''
+def_train_kwargs.update({'max_num_epochs':30,'stop_after_epochs':30})
+self.density_estimator_init = self.inference.train(**def_train_kwargs)
+            
+# 'Freeze' parameters in CNN
+for key, param  in self.inference._neural_net.named_parameters():
+    if 'embedding' in key:
+        param.requires_grad = False
+
+# Continue training with just Flow
+def_train_kwargs.update({'learning_rate':1e-4,'force_first_round_loss':True})
+def_train_kwargs.pop('max_num_epochs')
+def_train_kwargs.pop('stop_after_epochs')
+density_estimator = self.inference.train(**def_train_kwargs) ''' 

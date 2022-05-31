@@ -468,8 +468,51 @@ class Sersic_Default_Simmer(ArtpopSimmer):
         f_o = 1. - f_m
         logAge_o = 10.
         
-        src_y = self.build_sersic_ssp(logM+np.log10(f_y+1e-5), D, Z, logAge_y, sersic_params = self.sersic_params)
-        src_m = self.build_sersic_ssp(logM+np.log10(f_m+1e-5), D, Z, logAge_m, sersic_params = self.sersic_params)
-        src_o = self.build_sersic_ssp(logM+np.log10(f_o+1e-5), D, Z, logAge_o, sersic_params = self.sersic_params)
+        src_y = self.build_sersic_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y, sersic_params = self.sersic_params)
+        src_m = self.build_sersic_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m, sersic_params = self.sersic_params)
+        src_o = self.build_sersic_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o, sersic_params = self.sersic_params)
 
-        return src_y + src_m + src_o
+        return src_o + src_m + src_y
+    
+class SersicDefault2PopSimmer(ArtpopSimmer):
+    "Class to simulate a three component ssp with a sersic profile"
+    def __init__(self,
+                imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                sersic_params,
+                mag_limit = None,
+                mag_limit_band = None,
+                sky_sb = 22,
+                zpt = 27,
+                psf = None,
+                extinction_reddening = None):
+
+        super().__init__(imager,
+                filters,
+                exp_time,
+                im_dim,
+                pixel_scale,
+                mag_limit,
+                mag_limit_band,
+                sky_sb,
+                zpt,
+                psf,
+                extinction_reddening = extinction_reddening)
+
+        self.sersic_params = sersic_params
+        self.N_free = 5
+        self.param_descrip = ['D (Mpc)', 'logMs','F_y', 'log Age_y (Gyr)', 'Z']
+
+    def build_source(self, x):
+        D,logM, f_y, logAge_y, Z = x.tolist()
+        
+        f_o = 1. - f_y
+        logAge_o = 10.
+        
+        src_y = self.build_sersic_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y, sersic_params = self.sersic_params)
+        src_o = self.build_sersic_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o, sersic_params = self.sersic_params)
+
+        return src_o +  src_y
