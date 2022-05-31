@@ -1,6 +1,8 @@
 import argparse
 import torch
 from collections import Iterable
+import copy
+import _pickle as Cpickle
 
 from sbi import analysis
 from sbi import inference
@@ -103,7 +105,17 @@ class SilkScreenFitter():
             theta = self.inference._dataset.datasets[rounds].tensors[0].to('cpu') 
             x = self.inference._dataset.datasets[rounds].tensors[1].to('cpu') 
         torch.save([theta,x],'a')
-
+    
+    def pickle_posterior(self,file, r = -1):
+        assert len(self.posteriors) >= 1
+        post = copy.deepcopy(self.posteriors[r])
+    
+        post.posterior_estimator.to('cpu')
+        post.prior.custom_prior.device = 'cpu'
+        post.prior.support.base_constraint.lower_bound = post.prior.support.base_constraint.lower_bound.to('cpu')
+        post.prior.support.base_constraint.upper_bound = post.prior.support.base_constraint.upper_bound.to('cpu')
+        with open(file, "wb") as pkl_file:
+            Cpickle.dump(post, pkl_file)
 '''
 def_train_kwargs.update({'max_num_epochs':30,'stop_after_epochs':30})
 self.density_estimator_init = self.inference.train(**def_train_kwargs)
