@@ -1,0 +1,31 @@
+---
+simulator:
+  type: SersicSSP
+  instrument: DECam
+  bands:
+    - DECam_g
+    - DECam_r
+    - DECam_z
+  exptime: [30,30,60]
+  im_dim: [101,101]
+  pixel_scale:
+    0.262
+
+prior:
+  type: 2pop
+  log_distance: [1.5,4.5]
+  log_mass: [6.5,7.5]
+  MZR_expansion_factor: 2
+
+network:
+  n_channels: 16
+  dropout: 0.25
+  nde: nsf 
+
+training:
+  rounds: 3
+  num_sim:
+    - 1e4
+    - 5e3
+    - 5e3 
+
