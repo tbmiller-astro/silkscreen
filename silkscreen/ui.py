@@ -50,5 +50,4 @@ class SilkScreen():
         self.posterior = self.fitter.train_model(rounds=self.training_params['rounds'],
                                                 num_sim = self.training_params['num_sim'])
         if model_save_path is not None:
-            # ADD CODE TO SAVE PICKLE HERE
-            pass
+            self.posterior.pickle_posterior(model_save_path, r = -1)
