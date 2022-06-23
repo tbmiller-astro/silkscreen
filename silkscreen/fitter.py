@@ -7,7 +7,7 @@ import _pickle as Cpickle
 from sbi import analysis
 from sbi import inference
 from sbi.inference import SNPE, simulate_for_sbi, prepare_for_sbi
-
+from .utils import parse_torch_sim_file
 
 class SilkScreenFitter():
     def __init__(self,
@@ -41,7 +41,7 @@ class SilkScreenFitter():
         ):
         
         #Update any kwargs for infer.train
-        def_train_kwargs = {'training_batch_size': 64,'clip_max_norm': 5,'learning_rate':1e-4, 'validation_fraction':0.1}
+        def_train_kwargs = {'training_batch_size': 64,'clip_max_norm': 8,'learning_rate':1e-4, 'validation_fraction':0.1}
         def_train_kwargs.update(train_kwargs)
 
         ##Don't strictly need simulator but need to provide pre-sim and can't do more than one round
@@ -61,7 +61,7 @@ class SilkScreenFitter():
 
             #Can also use pre-simulated images from file for initial round
             if pre_simulated_file is not None and r == 0:
-                theta_cur,x_cur = torch.load(pre_simulated_file)
+                theta_cur,x_cur = parse_torch_sim_file(pre_simulated_file)
 
             else:
                 #Draw samples
@@ -81,11 +81,20 @@ class SilkScreenFitter():
                     theta_cur = a[:,None,:] *torch.ones(sim_function_kwargs['num_shuffle' ])[None,:,None]
                     theta_cur = theta_cur.view(x_cur.shape[0],-1)
             
-            print (x_cur.shape,theta_cur.shape)
             append_sims_kwargs.update({'proposal':proposal})
-            
             self.inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
-            density_estimator = self.inference.train(**def_train_kwargs)
+            del theta_cur,x_cur
+            
+            #Testing new optimizer, better to update sbi later
+            #if 'max_num_epochs' in def_train_kwargs.keys():
+            #    mne = def_train_kwargs.pop('max_num_epochs')
+            #else:
+            #    mne = 500
+            #density_estimator = self.inference.train(max_num_epochs = -1,**def_train_kwargs)
+            #def_train_kwargs.update( {'max_num_epochs':mne} )
+            #self.inference.optimizer = torch.optim.AdamW(list(self.inference._neural_net.parameters()), weight_decay = 1e-2, lr = def_train_kwargs['learning_rate'])
+            density_estimator = self.inference.train(**def_train_kwargs,force_first_round_loss = True)
+            
             # Return Posterior
             posterior = self.inference.build_posterior(density_estimator)
             self.posteriors.append(posterior)
@@ -109,13 +118,13 @@ class SilkScreenFitter():
     def pickle_posterior(self,file, r = -1):
         assert len(self.posteriors) >= 1
         post = copy.deepcopy(self.posteriors[r])
-    
-        post.posterior_estimator.to('cpu')
+        
+        post.set_default_x(self.x_obs[None])
+        post.potential_fn.device = 'cpu'
         post.prior.custom_prior.device = 'cpu'
-        post.prior.support.base_constraint.lower_bound = post.prior.support.base_constraint.lower_bound.to('cpu')
-        post.prior.support.base_constraint.upper_bound = post.prior.support.base_constraint.upper_bound.to('cpu')
-        with open(file, "wb") as pkl_file:
-            Cpickle.dump(post, pkl_file)
+        post._device = 'cpu'
+
+        torch.save(post,file)
 '''
 def_train_kwargs.update({'max_num_epochs':30,'stop_after_epochs':30})
 self.density_estimator_init = self.inference.train(**def_train_kwargs)

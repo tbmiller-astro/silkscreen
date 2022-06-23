@@ -8,6 +8,7 @@ from collections import Iterable
 import torch
 import os
 from astropy.table import Table
+import astropy.units as u
 
 class ArtpopIsoLoader():
     def __init__(self,
@@ -143,19 +144,17 @@ class ArtpopIsoLoader():
                                         random_state=None)
         return ssp_cur
 
-    def build_sersic_ssp(self, log_Ms, dist,  feh, log_age,sersic_params = None):
+    def build_sersic_source(self, sp,sersic_params = None):
         #Copied from artpop
-
-        ssp_cur = self.build_ssp(log_Ms, dist,  feh, log_age)
 
         ser_param = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
         ser_param.update(sersic_params)
 
-        ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * dist*1e3
+        ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * sp.distance.to(u.kpc).value
 
         #Generate artpop SSP
 
-        source_cur = artpop.source.SersicSP(ssp_cur,
+        source_cur = artpop.source.SersicSP(sp,
                                             ser_param['r_eff_kpc'],
                                             ser_param['n'],
                                             ser_param['theta'],
@@ -460,19 +459,20 @@ class Sersic_Default_Simmer(ArtpopSimmer):
 
         self.sersic_params = sersic_params
         self.N_free = 7
-        self.param_descrip = ['D (Mpc)', 'logMs','F_y', 'F_m','log Age_y (Gyr)','log Age_m (Gyr)', 'Z']
+        self.param_descrip = ['D (Mpc)', 'logMs','F_y', 'F_m','log Age_m (Gyr)', 'Z']
 
     def build_source(self, x):
-        D,logM, f_y,f_m, logAge_y,logAge_m, Z = x.tolist()
+        D,logM, f_y,f_m, logAge_m, Z = x.tolist()
         
-        f_o = 1. - f_m
+        f_o = 1. - (f_m + f_y) 
         logAge_o = 10.
+        logAge_y = 8.
         
-        src_y = self.build_sersic_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y, sersic_params = self.sersic_params)
-        src_m = self.build_sersic_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m, sersic_params = self.sersic_params)
-        src_o = self.build_sersic_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o, sersic_params = self.sersic_params)
-
-        return src_o + src_m + src_y
+        ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
+        ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
+        ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
+        sp_comb = ssp_y + ssp_m + ssp_o
+        return self.build_sersic_source(sp_comb, sersic_params = self.sersic_params)
     
 class SersicDefault2PopSimmer(ArtpopSimmer):
     "Class to simulate a three component ssp with a sersic profile"

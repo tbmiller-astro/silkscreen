@@ -5,7 +5,7 @@ from sbi.inference import posteriors
 from sbi.utils import BoxUniform
 from sbi.utils import process_prior
 from collections.abc import Iterable
-
+import gc
 from scipy.stats import truncnorm
 
 import torch.nn as nn
@@ -80,6 +80,26 @@ def load_post(prior, enet, state_dict, im_shape, flow = 'maf', net_kwargs = {},d
     
     #Return sbi object
     return posteriors.direct_posterior.DirectPosterior(net, prior, x_shape = (1,*im_shape),device =device )
+
+def parse_torch_sim_file(obj):
+    if isinstance(obj, str):
+        t_all,x_all = torch.load(obj)
+    else:
+        for i,f in enumerate(obj):
+            t_cur,x_cur = torch.load(f)
+            if i == 0:
+                per_file = t_cur.shape[0]
+                N_param = t_cur.shape[1]
+                im_size = tuple(x_cur.shape[1:])
+            
+                x_all = torch.ones((per_file*len(obj),*im_size) )
+                t_all = torch.ones((per_file*len(obj),N_param) )
+            
+            t_all[i*per_file:(i+1)*per_file] = t_cur
+            x_all[i*per_file:(i+1)*per_file] = x_cur           
+            del t_cur,x_cur
+            
+    return t_all,x_all
 
 def get_reddening(coords,filts):
     from dustmaps.sfd import SFDQuery
@@ -224,19 +244,24 @@ def get_mssp_prior(Dlims,Mlims,logAgelims,device = 'cpu'):
     return prior
 
 class Default_Prior:
-    def __init__(self,Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 0.1,f_Y_sig = 0.02, device = 'cpu'):
+    def __init__(self,Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 0.1,f_Y_sig = 0.02,f_M_max = 0.75,f_M_mean = 0.2, f_M_sig = 0.2, device = 'cpu'):
         
-        self.Dlims = torch.tensor(Dlims)
-        self.D_dist = BoxUniform(low = [Dlims[0],],high = [Dlims[1],])
+        self.Dlims = torch.tensor(Dlims).to('cpu')
+        self.D_dist = BoxUniform(low = [Dlims[0],],high = [Dlims[1],],device = 'cpu')
         self.Mlims = torch.tensor(Mlims)
-        self.M_dist = BoxUniform(low = [Mlims[0],],high = [Mlims[1],])
+        self.M_dist = BoxUniform(low = [Mlims[0],],high = [Mlims[1],],device = 'cpu')
         
         self.f_Y_max = f_Y_max 
         self.f_Y_sig = f_Y_sig
-        self.f_M_dist = BoxUniform(low = [0,],high = [1,])
+        
+        self.f_M_max = f_M_max 
+        self.f_M_sig = f_M_sig
+        self.f_M_mean = f_M_mean
 
-        self.age_Y_dist = BoxUniform(low = [8,],high = [8.7,])
-        self.age_M_dist = BoxUniform(low = [8.7,],high = [9.5,])
+        
+        assert self.f_M_max + self.f_Y_max < 1.
+        
+        self.age_M_dist = BoxUniform(low = [8.5,],high = [9.5,],device = 'cpu')
         
         self.MZR_sig = 0.17*MZR_expand_fac
         self.Z_min = -2.25
@@ -248,7 +273,7 @@ class Default_Prior:
         return -1.69 + 0.3*(logM - 6.)
     
     def sample_Z_SSP(self, M_tot,sample_shape):
-        Z_mean = self.MZR(M_tot).numpy() 
+        Z_mean = self.MZR(M_tot).to('cpu').numpy() 
         a = (self.Z_min - Z_mean)/self.MZR_sig
         b = (self.Z_max - Z_mean)/self.MZR_sig
         Z_samps =  truncnorm.ppf(np.random.uniform(size = sample_shape),a,b, Z_mean, self.MZR_sig ) 
@@ -257,11 +282,24 @@ class Default_Prior:
         return torch.Tensor(Z_samps)
     
     def log_prob_Z_SSP(self,Z, M_tot):
-        Z_mean = self.MZR(M_tot).numpy()
+        Z_mean = self.MZR(M_tot).to('cpu').numpy()
         a = (self.Z_min - Z_mean)/self.MZR_sig
         b = (self.Z_max - Z_mean)/self.MZR_sig
-        return truncnorm.logpdf(Z,a,b, Z_mean, self.MZR_sig )
-
+        return  torch.Tensor ( truncnorm.logpdf(Z,a,b, Z_mean, self.MZR_sig ) )
+    
+    def sample_f_M(self,sample_shape):
+        a = (0 - self.f_M_mean )/self.f_M_sig
+        b = (self.f_M_max - self.f_M_mean )/self.f_M_sig
+        f_M_samps  =  truncnorm.ppf(np.random.uniform(size = sample_shape),a,b, self.f_M_mean, self.f_M_sig )
+        if not isinstance(f_M_samps,Iterable):
+            f_M_samps = [f_M_samps,]
+        return  torch.Tensor(f_M_samps )
+    
+    def log_prob_f_M(self,f_M):
+        a = (0 - self.f_M_mean )/self.f_M_sig
+        b = (self.f_M_max - self.f_M_mean )/self.f_M_sig
+        return  torch.Tensor ( truncnorm.logpdf(f_M,a,b, self.f_M_mean, self.f_M_sig ) )
+    
     def sample_f_Y(self,sample_shape):
         a = 0
         b = (self.f_Y_max )/self.f_Y_sig
@@ -273,49 +311,44 @@ class Default_Prior:
     def log_prob_f_Y(self,f_Y):
         a = 0
         b = (self.f_Y_max )/self.f_Y_sig
-        return truncnorm.logpdf(f_Y,a,b, 0, self.f_Y_sig )
+        return  torch.Tensor ( truncnorm.logpdf(f_Y,a,b, 0, self.f_Y_sig ) )
     
     def sample(self, sample_shape=torch.Size([])):
 
         samps = []
-        samps.append( self.D_dist.sample(sample_shape).view(sample_shape) )
-        samps.append( self.M_dist.sample(sample_shape).view(sample_shape) )
+        samps.append( self.D_dist.sample(sample_shape).view(sample_shape).to(self.device ) )
+        samps.append( self.M_dist.sample(sample_shape).view(sample_shape).to(self.device ) )
         
-        samps.append( self.sample_f_Y(sample_shape).view(sample_shape) )
-        samps.append( self.f_M_dist.sample(sample_shape).view(sample_shape) )
+        samps.append( self.sample_f_Y(sample_shape).view(sample_shape).to(self.device ) )
+        samps.append( self.sample_f_M(sample_shape).view(sample_shape).to(self.device ) )
         
-        samps.append( self.age_Y_dist.sample(sample_shape).view(sample_shape) )
-        samps.append( self.age_M_dist.sample(sample_shape).view(sample_shape) )
+        samps.append( self.age_M_dist.sample(sample_shape).view(sample_shape).to(self.device ) )
         
-        samps.append( self.sample_Z_SSP(samps[1],sample_shape).view(sample_shape))
+        samps.append( self.sample_Z_SSP(samps[1],sample_shape).view(sample_shape).to(self.device) )
 
         
-        return torch.stack(samps).to(torch.float).T.to(self.device)
+        return torch.stack(samps).to(torch.float).T
 
     def log_prob(self, values):
-
-        values = values.to('cpu')
+        
         if values.ndim == 1:
             values = values.view(-1,values.shape[0])
+       	values = values.to('cpu') 
+        log_prob = torch.zeros(values.shape[0]).to(self.device)
         
-        log_prob = torch.zeros(values.shape[0])
-        
-        log_prob += self.D_dist.log_prob(values[:,0])
-        log_prob += self.M_dist.log_prob(values[:,1])
-        
-        log_prob += self.log_prob_f_Y(values[:,2])
-        log_prob += self.f_M_dist.log_prob(values[:,3])
-        
-        log_prob += self.age_Y_dist.log_prob(values[:,4])
-        log_prob += self.age_M_dist.log_prob(values[:,5])
-        
-        log_prob += self.log_prob_Z_SSP(values[:,6], values[:,1])
-        
-        return log_prob.to(self.device)
+        log_prob += self.D_dist.log_prob(values[:,0]).to(self.device)
+        log_prob += self.M_dist.log_prob(values[:,1]).to(self.device)
+        log_prob += self.log_prob_f_Y(values[:,2]).to(self.device)
+        log_prob += self.log_prob_f_M(values[:,3]).to(self.device)
+        log_prob += self.age_M_dist.log_prob(values[:,4]).to(self.device)
+        log_prob += self.log_prob_Z_SSP(values[:,5], values[:,1]).to(self.device)
 
-def get_default_prior(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 0.1,f_Y_sig = 0.02, device = 'cpu'):
+        return log_prob
+
+def get_default_prior(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 0.1,f_Y_sig = 0.02,f_M_max = 0.75,f_M_mean = 0.2, f_M_sig = 0.2, device = 'cpu'):
     
-    custom_prior = Default_Prior(Dlims,Mlims,MZR_expand_fac =MZR_expand_fac,f_Y_max = f_Y_max,f_Y_sig = f_Y_sig, device = device)
+    custom_prior = Default_Prior(Dlims,Mlims,MZR_expand_fac =MZR_expand_fac,f_Y_max = f_Y_max,f_Y_sig = f_Y_sig, 
+     f_M_max = f_M_max,f_M_mean = f_M_mean,f_M_sig = f_M_sig, device = device)
     
     lower_bounds = []
     upper_bounds = []
@@ -334,11 +367,7 @@ def get_default_prior(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 0.1,f_Y_sig = 0
     
     #f_M
     lower_bounds.append(0)
-    upper_bounds.append(1)
-        
-    #log_age_Y
-    lower_bounds.append( float(custom_prior.age_Y_dist.support.base_constraint.lower_bound[0]) )
-    upper_bounds.append( float(custom_prior.age_Y_dist.support.base_constraint.upper_bound[0]) )
+    upper_bounds.append(f_M_max)
     
     #log_Age_M
     lower_bounds.append( float(custom_prior.age_M_dist.support.base_constraint.lower_bound[0]) )
