@@ -118,7 +118,7 @@ class ArtpopIsoLoader():
                 m_convert = converter(filt)
             except AttributeError:
                 m_convert = 0.0
-                logger.warning(f'No AB / Vega conversion found for {filt}.')
+                artpop.logger.warning(f'No AB / Vega conversion found for {filt}.')
             iso[filt] = iso[filt] + m_convert
 
         return artpop.isochrones.Isochrone(
@@ -297,6 +297,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
             cur_shuf_list = []
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
+            print (src_cur.xy)
             for j,filt_cur in enumerate(self.filters):
 
                 cur_psf = self.psf[j] if self.psf.ndim>2 else self.psf
@@ -314,6 +315,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
         return img_list
 
 
+### Below are specifc classes
 class SersicSSPSimmer(ArtpopSimmer):
     "Class to simulate simple ssp with a sersic profile"
     def __init__(self,
@@ -384,12 +386,15 @@ class SersicTwoSSPSimmer(ArtpopSimmer):
 
     def build_source(self, x):
         logMs, D,F_1, Z_1, logAge_1,Z_2, logAge_2 = x.tolist()
+        assert 0.<= F_1 <= 1
         F_2 = 1.-F_1
-        src_1 = self.build_sersic_ssp(logMs+np.log10(F_1), D, Z_1, logAge_1,sersic_params = self.sersic_params)
-        src_2 = self.build_sersic_ssp(logMs+np.log10(F_2), D, Z_2, logAge_2,sersic_params = self.sersic_params)
-        return src_1 + src_2
 
-class SersicOMYSimmer(ArtpopSimmer):
+        ssp_1 = self.build_ssp(logMs + np.log10(F_1 + 1e-6), D, Z_1, logAge_1)
+        ssp_2 = self.build_ssp(logMs + np.log10(F_2 + 1e-6), D, Z_2, logAge_2)
+        sp_comb = ssp_1 + ssp_2
+        return self.build_sersic_source(sp_comb, sersic_params = self.sersic_params)
+
+class SersicThreeSSPSimmer(ArtpopSimmer):
     "Class to simulate a three component ssp with a sersic profile"
     def __init__(self,
                 imager,
@@ -421,15 +426,17 @@ class SersicOMYSimmer(ArtpopSimmer):
         self.param_descrip = ['D (Mpc)', 'logM_y','F_m', 'Z_y','log Age_y (Gyr)','logM_m', 'Z_m','log Age_m (Gyr)', 'logM_o','Z_o','log Age_o (Gyr)']
 
     def build_source(self, x):
-        D,logM_y, Z_y, logAge_y,logM_m, Z_m, logAge_m,logM_o,Z_o, logAge_o = x.tolist()
-        
-        src_y = self.build_sersic_ssp(logM_y, D, Z_y, logAge_y,sersic_params = self.sersic_params)
-        src_m = self.build_sersic_ssp(logM_m, D, Z_m, logAge_m,sersic_params = self.sersic_params)
-        src_o = self.build_sersic_ssp(logM_o, D, Z_o, logAge_o,sersic_params = self.sersic_params)
+        logMs, D,F_1, Z_1, logAge_1,F_2,Z_2, logAge_2, Z_3, logAge_3, = x.tolist()
+        assert 0. <= F_1 + F_2 <= 1.
+        F_3 = 1 - F_1 - F_2
+        ssp_1 = self.build_ssp(logMs + np.log10(F_1 + 1e-6), D, Z_1, logAge_1)
+        ssp_2 = self.build_ssp(logMs + np.log10(F_2 + 1e-6), D, Z_2, logAge_2)
+        ssp_3 = self.build_ssp(logMs + np.log10(F_3 + 1e-6), D, Z_3, logAge_3)
 
-        return src_y + src_m + src_o
+        sp_comb = ssp_1 + ssp_2 + ssp_3
+        return self.build_sersic_source(sp_comb, sersic_params = self.sersic_params)
 
-class Sersic_Default_Simmer(ArtpopSimmer):
+class DefaultSersicSimmer(ArtpopSimmer):
     "Class to simulate a three component ssp with a sersic profile"
     def __init__(self,
                 imager,
@@ -473,46 +480,3 @@ class Sersic_Default_Simmer(ArtpopSimmer):
         ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
         sp_comb = ssp_y + ssp_m + ssp_o
         return self.build_sersic_source(sp_comb, sersic_params = self.sersic_params)
-    
-class SersicDefault2PopSimmer(ArtpopSimmer):
-    "Class to simulate a three component ssp with a sersic profile"
-    def __init__(self,
-                imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                sersic_params,
-                mag_limit = None,
-                mag_limit_band = None,
-                sky_sb = 22,
-                zpt = 27,
-                psf = None,
-                extinction_reddening = None):
-
-        super().__init__(imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                mag_limit,
-                mag_limit_band,
-                sky_sb,
-                zpt,
-                psf,
-                extinction_reddening = extinction_reddening)
-
-        self.sersic_params = sersic_params
-        self.N_free = 5
-        self.param_descrip = ['D (Mpc)', 'logMs','F_y', 'log Age_y (Gyr)', 'Z']
-
-    def build_source(self, x):
-        D,logM, f_y, logAge_y, Z = x.tolist()
-        
-        f_o = 1. - f_y
-        logAge_o = 10.
-        
-        src_y = self.build_sersic_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y, sersic_params = self.sersic_params)
-        src_o = self.build_sersic_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o, sersic_params = self.sersic_params)
-
-        return src_o +  src_y

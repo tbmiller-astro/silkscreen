@@ -1,31 +1,82 @@
 ---
+obs_file: 'obs.npy'
+
 simulator:
-  type: SersicSSP
+  type: DefaultSersicSimmer
   instrument: DECam
-  bands:
+  filters:
     - DECam_g
     - DECam_r
     - DECam_z
-  exptime: [30,30,60]
-  im_dim: [101,101]
-  pixel_scale:
-    0.262
+  pixel_scale: 0.262
+  zpt: 22.5 # Float or list
+  exp_time: [30,30,60] #float or list
+  sky_sb: [22,21,20] #float or list
+  
+  sersic_params: #parameters of Sersic model
+    r_eff: 10 #Effective radius in arcsec
+    index: 1 #Sersic index
+    theta: 0 #position angle
+    ellip: 0 # Ellipticity
+    dx: 0 #Offset of model centre from centre of image
+    dy: 0
+  
+  psf_files: #can be fits, .npy or .pt
+    - psf.npy
+    - psf.npy
+    - psf.npy
+
+  #To control mag_limit in artpop
+  mag_limit: 29
+  mag_limit_band: DECam_r
+  
+  inject_file: null
 
 prior:
-  type: 2pop
-  log_distance: [1.5,4.5]
-  log_mass: [6.5,7.5]
-  MZR_expansion_factor: 2
+  type: Default
+  Dlims: [2.5,3.5] #Uniform in Mpc
+  Mlims: [6.5,7.5] #Uniform in log Ms/M_sun
+  MZR_expand_fac: 2 #Multiplicative Factorto increase scatter for Kirby+13 MZR (0.17 dex by default)
 
-network:
-  n_channels: 16
-  dropout: 0.25
-  nde: nsf 
+###
+# All these options below are only used in run_train_from_yaml function
+###
 
 training:
-  rounds: 3
-  num_sim:
-    - 1e4
-    - 5e3
-    - 5e3 
+  training_device: 'cpu'
+  data_device: 'cpu'
 
+  train_kwargs:
+    training_batch_size: 100 
+    learning_rate: 0.0001
+    validation_fraction: 0.1
+    clip_max_norm: 15 #How to clip outlying gradients
+    stop_after_epochs: 20 #Will stop training after this many epochs of no improvement in validation loss
+    max_num_epochs: 500 #Hard cap on number of Epochs
+  
+  rounds: 4
+  num_sim: [5_000,5_000,5_000,5_000]
+  pre_simulated_file: null # Pre-simulated data from Prior to be used in Round 1 of training
+
+
+
+#######
+# Shouldn't need to change any of these
+#######
+network:
+  CNN: #Parameters for building DenseNet for CNN
+    num_classes: 64 #Number of summary statistics - hyperparameter
+    block_config: [4,6,8,4] #Config of DenseBlocks, increase number or add more for deeper network
+    growth_rate: 12 # Growth rate for number of Channels
+    num_init_features: 32 #Number of initial channels
+    drop_rate: 0. #Dropout probability
+    memory_efficient: True #Set False for faster training but more memory usage
+
+  #Options passed to posterior_nn in sbi
+  Flow:
+    model: 'nsf' #Or maf or MDN, see sbi
+    hidden_features: 100 # Number of features per transform
+    num_transform: 5 #Number of Transforms
+    num_bins: 10 #Number of splines for nsf
+    z_score_theta: 'independent' #Whether to Z-score parameters 
+    z_score_x: 'stuctured' #Whether to Z-score data

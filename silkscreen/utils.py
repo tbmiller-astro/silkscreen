@@ -7,6 +7,7 @@ from sbi.utils import process_prior
 from collections.abc import Iterable
 import gc
 from scipy.stats import truncnorm
+from astropy.io import fits
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,6 +16,22 @@ import astropy.units as u
 import numpy as np
 
 default_sersic_dict = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
+
+def parse_input_file(location, output = 'torch'):
+    suffix = location.split('.')[-1]
+    assert suffix in ['pt','npy','fits']
+    if suffix == 'pt':
+        obs_data = torch.load(location)
+    elif suffix == 'npy':
+        obs_data = torch.from_numpy( np.load(location))
+    elif suffix == 'fits':
+        obs_data = torch.from_numpy(fits.getdata(location) )
+    else:
+        return 0
+
+    if output == 'numpy':
+        return obs_data.numpy()
+    return obs_data
 
 def block_mean(x, num_block):
     r1 = x.shape[1]%num_block
@@ -113,6 +130,7 @@ def get_reddening(coords,filts):
     
     return extinction.apply(extinction.calzetti00(lam_eff, 3.1*ebv, 3.1), flux)
 
+##TODO Alter to take M_total + F_1 and F_2 rather than individual Ms
 class MSSP_Prior:
     def __init__(self,Dlims,Mlims,logAgelims,expand_fac = 1.,device = 'cpu'):
         
@@ -333,7 +351,7 @@ class Default_Prior:
         
         if values.ndim == 1:
             values = values.view(-1,values.shape[0])
-       	values = values.to('cpu') 
+        values = values.to('cpu') 
         log_prob = torch.zeros(values.shape[0]).to(self.device)
         
         log_prob += self.D_dist.log_prob(values[:,0]).to(self.device)

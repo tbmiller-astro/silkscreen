@@ -1,12 +1,8 @@
-import argparse
 import torch
 from collections import Iterable
 import copy
-import _pickle as Cpickle
 
-from sbi import analysis
-from sbi import inference
-from sbi.inference import SNPE, simulate_for_sbi, prepare_for_sbi
+from sbi.inference import SNPE
 from .utils import parse_torch_sim_file
 
 class SilkScreenFitter():
@@ -16,7 +12,6 @@ class SilkScreenFitter():
         x_obs,
         prior,
         device = 'cpu',
-        sim_function_kwargs = {}
         ):
         self.sim_function = sim_function
 
@@ -30,14 +25,23 @@ class SilkScreenFitter():
         self.x_shape = x_obs.shape
         self.device = device
         self.inference = SNPE(prior = prior, density_estimator = nde, device = device)
-        self.sim_function_kwargs = sim_function_kwargs
+
+    def run_sims(self, proposal, num):
+        theta = proposal.sample((num,)).to('cpu')# Always need on cpu
+        x = []
+        for theta_cur in theta:
+            x.append(self.sim_function(theta_cur))
+
+        x = torch.stack(x)
+        return theta,x
+
 
     def train_model(self,
         rounds = 1,
         num_sim = int(1e4),
         pre_simulated_file = None,
         train_kwargs = {},
-        append_sims_kwargs = {},
+        data_device = None,
         ):
         
         #Update any kwargs for infer.train
@@ -59,41 +63,19 @@ class SilkScreenFitter():
             else:
                 proposal = self.posteriors[-1].set_default_x(self.x_obs[None])
 
+            num_r = num_sim[r] if isinstance(num_sim, Iterable) else num_sim
+
             #Can also use pre-simulated images from file for initial round
             if pre_simulated_file is not None and r == 0:
                 theta_cur,x_cur = parse_torch_sim_file(pre_simulated_file)
-
             else:
-                #Draw samples
-                if isinstance(num_sim, Iterable):
-                    theta_cur = proposal.sample((num_sim[r],)).to('cpu')
-                else:
-                    theta_cur = proposal.sample((num_sim,)).to('cpu')
-
-                x_cur = []
-                for theta in theta_cur:
-                    x_cur.append(self.sim_function(theta, **self.sim_function_kwargs)[None])
-
-                x_cur = torch.vstack(x_cur)
+                theta_cur,x_cur = self.run_sims(proposal, num_r)
                 
-                ## make sure number of thetas matches if shuffled images.
-                if 'num_shuffle' in self.sim_function_kwargs:
-                    theta_cur = a[:,None,:] *torch.ones(sim_function_kwargs['num_shuffle' ])[None,:,None]
-                    theta_cur = theta_cur.view(x_cur.shape[0],-1)
-            
-            append_sims_kwargs.update({'proposal':proposal})
+            append_sims_kwargs = {'proposal':proposal, 'device':data_device}
             self.inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
             del theta_cur,x_cur
-            
-            #Testing new optimizer, better to update sbi later
-            #if 'max_num_epochs' in def_train_kwargs.keys():
-            #    mne = def_train_kwargs.pop('max_num_epochs')
-            #else:
-            #    mne = 500
-            #density_estimator = self.inference.train(max_num_epochs = -1,**def_train_kwargs)
-            #def_train_kwargs.update( {'max_num_epochs':mne} )
-            #self.inference.optimizer = torch.optim.AdamW(list(self.inference._neural_net.parameters()), weight_decay = 1e-2, lr = def_train_kwargs['learning_rate'])
-            density_estimator = self.inference.train(**def_train_kwargs,force_first_round_loss = True)
+
+            density_estimator = self.inference.train(**def_train_kwargs)
             
             # Return Posterior
             posterior = self.inference.build_posterior(density_estimator)
@@ -102,6 +84,7 @@ class SilkScreenFitter():
         return posterior
     
     def save_simulations(self,file_name,rounds):
+        ###TODO This functions needs to be redone with new version of SBI ####
         if isinstance(rounds,Iterable):
             theta = []
             x = []
@@ -113,7 +96,7 @@ class SilkScreenFitter():
         else:
             theta = self.inference._dataset.datasets[rounds].tensors[0].to('cpu') 
             x = self.inference._dataset.datasets[rounds].tensors[1].to('cpu') 
-        torch.save([theta,x],'a')
+        torch.save([theta,x],file_name)
     
     def pickle_posterior(self,file, r = -1):
         assert len(self.posteriors) >= 1
@@ -121,7 +104,8 @@ class SilkScreenFitter():
         
         post.set_default_x(self.x_obs[None])
         post.potential_fn.device = 'cpu'
-        post.prior.custom_prior.device = 'cpu'
+        if hasattr(post.prior.custom_prior):
+            post.prior.custom_prior.device = 'cpu'
         post._device = 'cpu'
 
         torch.save(post,file)
