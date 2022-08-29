@@ -5,8 +5,15 @@ from torch import save as torch_save
 from silkscreen import simmer
 from silkscreen import utils as ssu
 from silkscreen.DenseNet import DenseNet
-from silkscreen.fitter import SilkScreenFitter
 from sbi.utils.get_nn_models import posterior_nn
+
+from typing import Union
+import artpop 
+import astropy.units as u 
+from silkscreen import utils
+from silkscreen.simmer import SersicSSPSimmer, SersicTwoSSPSimmer,SersicThreeSSPSimmer, DefaultSersicSimmer
+
+#TODO All this stuff needs to be re-worked a little bit with the changes to fitter.py and simmer.py
 
 def initialize_from_config(config):
     if type(config) == dict:
@@ -97,54 +104,99 @@ def train_model_from_config(config, save_loc = None):
 
 
 ######
-#Below is Imad's old class
+#Imad's  class
 ######
 
-class SilkScreen():
-    def __init__(self,config_file):
-        self.parse_config(config_file)
+class SilkscreenFitter():
+    """
+    Class for initializing user observations
+    """
+    def __init__(self,
+                image_path,
+                instrument: str,
+                image_bands: list,
+                exp_times: list,
+                image_dim: tuple,
+                ):
+        """
+        Initialize an observation object. 
 
-    def parse_config(self,config_file):
-        with open(config_file,'r') as stream:
-            config_dict = yaml.safe_load(stream)
-        # Parse Simulator
-        sim_configs = config_dict['simulator']
-        bands = sim_configs['band']
-        exptime = sim_configs['exptime']
-        im_dim = sim_configs['im_dim']
-        pixel_scale = sim_configs['pixel_scale']
-        if sim_configs['instrument'] == 'DECam':
-            imager = ssu.get_DECam_imager()
-        if sim_configs['type'] == 'SersicSSP':
-            sim = simmer.SersicSSPSimmer(imager,bands,exptime,im_dim,pixel_scale)
-        elif sim_configs['type'] == 'SersicTwoSSP':
-            sim = simmer.SersicTwoSSPSimmer(imager,bands,exptime,im_dim,pixel_scale)
-        elif sim_configs['type'] == 'SersicOMYSimmer':
-            sim = simmer.SersicOMYSimmer(imager,bands,exptime,im_dim,pixel_scale)
-        elif sim_configs['type'] == 'Sersic Default':
-            sim = simmer.Sersic_Default_Simmer(imager,bands,exptime,im_dim,pixel_scale)
-        elif sim_configs['type'] == 'Sersic Default 2pop':
-            sim = simmer.SersicDefault2PopSimmer(imager,bands,exptime,im_dim,pixel_scale)
+        Parameters
+        ----------
+        image: pt, npy, or fits file
+            image to fit
+        instrument: str or `artpop.ArtImager`
+            telescope / imager of the input observations. Currently supported: 'DECam', 'HSC'
+        image_bands: list
+            names of the bands for the input observations. 
+        """
+        self.image = self.parse_input(image_path)
+        self.parse_imager(instrument,image_bands)
+        self.exp_times = exp_times
+        self.image_dim = image_dim
+
+    def parse_input(self,image_path,output='torch'):
+        return utils.parse_input_file(image_path,output=output)
+    def parse_imager(self,imager,image_bands):
+        if isinstance(imager,str):
+            if imager not in ['DECam','HSC']:
+                raise AssertionError(f'imager not in supported list: DECam, HSC')
+            elif imager == 'DECam':
+                self.imager = artpop.image.ArtImager('DECam', diameter = 4.0*u.m, read_noise = 7)
+                self.pixel_scale = 0.262
+                convert_dict = {'g':'DECam_g',
+                        'r':'DECam_r',
+                        'i':'DECam_i',
+                        'z':'DECam_z'}
+                self.bands = []
+                for i in image_bands:
+                    if i in convert_dict.values():
+                        self.bands.append(i)
+                    elif i.lower() in convert_dict.keys():
+                        self.bands.append(convert_dict[i])
+                    else:
+                        raise AssertionError(f'Band name {i} not recognized for this instrument.')
+            elif imager == 'HSC':
+                self.imager = artpop.image.ArtImager('HSC', diameter = 8.4*u.m, read_noise = 4.5)
         else:
-            raise AssertionError('sim type must be in [SersicSSP,SersicTwoSSP,SersicOMYSimmer,Sersic Default, Sersic Default 2pop].')
-        self.sim = sim 
-        # Parse priors
-        prior_dict = config_dict['prior']
-        if prior_dict['type'] == '2pop':
-            prior = ssu.get_default_2pop_prior(prior_dict['log_distance'],
-                                                prior_dict['log_mass'],
-                                                MZR_expand_fac=prior_dict['MZR_expansion_factor'])
-        
-        # Parse network
-        network_configs = config_dict['network']
-        enet = ssu.Default_NN(num_filt=3,nout=network_configs['n_channels'],im_size=im_dim,dropout_p=network_configs['dropout'])
-        nde = posterior_nn('nsf',embedding_net=enet,z_score_theta='none',z_score_x='none')
-        
-        #self.fitter = SilkScreenFitter(sim.get_image,nde,x_obs,prior,device='cpu')
-        self.training_params = config_dict['training']
+            self.imager = imager
+            self.bands = image_bands
+    def select_model(self,model):
+        assert model in ['SersicSSP','SersicTwoSSP','SersicThreeSSP','DefaultSersicSSP']
+        self._modstr = model
+        if model == 'SersicSSP':
+            self.simmer = SersicSSPSimmer(self.imager,self.bands,self.exp_times,self.image_dim,self.pixel_scale)
+        elif model == 'SersicTwoSSP':
+            self.simmer = SersicTwoSSPSimmer(self.imager,self.bands,self.exp_times,self.image_dim,self.pixel_scale)
+        elif model == 'SersicThreeSSP':
+            self.simmer = SersicThreeSSPSimmer(self.imager,self.bands,self.exp_times,self.image_dim,self.pixel_scale)
+        elif model == 'DefaultSersicSimmer':
+            self.simmer = DefaultSersicSimmer(self.imager,self.bands,self.exp_times,self.image_dim,self.pixel_scale)
 
-    def train_model(self,model_save_path=None):
-        self.posterior = self.fitter.train_model(rounds=self.training_params['rounds'],
-                                                num_sim = self.training_params['num_sim'])
-        if model_save_path is not None:
-            self.posterior.pickle_posterior(model_save_path, r = -1)
+    def initialize_NN(self,nout=16,dropout=0.5,z_score_theta='independent',z_score_x='structured'):
+        self.enet = utils.Default_NN(num_filt=len(self.bands),
+                                    nout=nout,
+                                    im_size=self.image_dim,
+                                    dropout=dropout)
+        self.nde = posterior_nn('nsf',
+                                embedding_net=self.enet,
+                                z_score_theta=z_score_theta,
+                                z_score_x = z_score_x)
+        
+    
+    def set_priors(self,distance_prior,mass_prior,**kwargs):
+        if self._modstr == 'SersicSSP':
+            self.prior = utils.get_default_prior(distance_prior,mass_prior,**kwargs)
+        elif self._modstr == 'SersicTwoSSP':
+            self.prior = utils.get_default_2pop_prior(distance_prior,mass_prior,**kwargs)
+        elif self._modstr == 'SersicThreeSSP':
+            raise NotImplementedError('Not Yet Implemented')
+
+    def train_NN(self,rounds=3,
+                num_simulations = [int(1e4),int(5e3),int(5e3)],
+                save_posterior_to = './posterior.pkl',
+                device='cpu'):
+        self.fitter = Fitter(self.simmer.get_image,self.nde,self.image,self.prior,device=device)
+        self.posterior = self.fitter.train_model(rounds=rounds,
+                                                num_sim=num_simulations)
+        self.fitter.pickle_posterior(save_posterior_to)

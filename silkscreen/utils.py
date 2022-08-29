@@ -17,6 +17,15 @@ import numpy as np
 
 default_sersic_dict = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
 
+def run_sims(sim_func, proposal, num) -> torch.Tensor:
+    theta = proposal.sample((num,)).to('cpu')# Always need on cpu
+    x = []
+    for theta_cur in theta:
+        x.append(sim_func(theta_cur))
+
+    x = torch.stack(x)
+    return theta,x
+
 def parse_input_file(location, output = 'torch'):
     suffix = location.split('.')[-1]
     assert suffix in ['pt','npy','fits']

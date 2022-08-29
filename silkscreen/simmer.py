@@ -9,6 +9,7 @@ import torch
 import os
 from astropy.table import Table
 import astropy.units as u
+from observation import SilkScreenObservation
 
 class ArtpopIsoLoader():
     def __init__(self,
@@ -144,106 +145,44 @@ class ArtpopIsoLoader():
                                         random_state=None)
         return ssp_cur
 
-    def build_sersic_source(self, sp,sersic_params = None):
-        #Copied from artpop
+class ArtpopSimmer(ArtpopIsoLoader):
+    "Base Class to produce many artpop simulations based on SilkScreen Observations Object"
+    def __init__(self,obs_object: SilkScreenObservation):
+        assert obs_object.verify_observations() # Make sure everything is gucci
+        self.obs_object = obs_object
 
-        ser_param = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
-        ser_param.update(sersic_params)
+    def build_sp(self,x):
+        raise NotImplementedError
 
-        ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * sp.distance.to(u.kpc).value
-
-        #Generate artpop SSP
-
-        source_cur = artpop.source.SersicSP(sp,
+    def build_source(self,x):
+        sp_use = self.build_sp(x)
+        
+        if self.obs_object.distribution.lower() == 'sersic':
+            ser_param = self.obs_object.distribution_kwargs.copy()
+            ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * sp_use.distance.to(u.kpc).value
+            source_cur = artpop.source.SersicSP(sp_use,
                                             ser_param['r_eff_kpc'],
                                             ser_param['n'],
                                             ser_param['theta'],
-                                            ser_param['ellip'],
-                                            self.im_dim,
-                                            self.pixel_scale,
+                                            ser_param['ellip'], 
+                                            self.obs_object.im_dim,
+                                            self.obs_object.pixel_scale,
                                             num_r_eff=10,
                                             dx=ser_param['dx'],
                                             dy=ser_param['dy'],
                                             labels=None)
-        return source_cur
-
-class ArtpopSimmer(ArtpopIsoLoader):
-    "Base Class to produce many artpop simulations"
-    def __init__(self,
-                imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                mag_limit = None,
-                mag_limit_band = None,
-                sky_sb = 21,
-                zpt = 27,
-                psf =  None,
-                iso_kwargs = {},
-                extinction_reddening = None):
-        '''
-        Initialize Class.
-
-        Parameters
-        ----------
-        imager: Artpop Imager object
-        filters: list
-            list of filters for images
-        exp_time: float
-            exposure time to use (seconds)
-        im_im: int
-            image dimensions
-        pixel_scale: float
-            pixel scale for the instrument
-        mag_limit: float, optional (default: None)
-            Magnitude limit for which to resolve individual stars.
-            Stars below this magnitude are not individually sampled and are estimated by a
-            smooth component. By default, all stars are simulated.
-        mag_limit_band: str, optional (default: None)
-            Band in which the mag limit is calculated / applied.
-        sky_sb: float, optional (default: 21)
-            sky surface brightness to use, in mag/arcsec^2
-        psf: artpop psf object, optional (default: None)
-            PSF to use. If none provided, a Moffat psf with a 0.7 arcsecond FWHM is used.
-        iso_kwargs: dict, optional (default :None)
-            Additional keyword arguments to pass to ArtpopIsoLoader
-        '''
-        self.imager = imager
-        super().__init__(imager.phot_system,
-                        mag_limit=mag_limit,
-                        mag_limit_band=mag_limit_band,
-                        im_dim = im_dim,
-                        pixel_scale = pixel_scale,
-                        **iso_kwargs)
-        self.num_filters = len(filters)
-        self.filters = filters
-
-        ##All these can be dynamically overwritten
-
-        #Can pass constant or list with len == num_filters
-        if isinstance(sky_sb,Iterable): assert len(sky_sb) == self.num_filters
-        self.sky_sb = sky_sb
-
-        if isinstance(zpt,Iterable): assert len(zpt) == self.num_filters
-        self.zpt = zpt
-
-        #Can pass constant or list with len == num_filters
-        if isinstance(exp_time,Iterable): assert len(exp_time) == self.num_filters
-        self.exp_time = exp_time
-
-        #Can pass 2D array for all filters or 3D array with separate for each filter
-        if psf is None:
-            self.psf = artpop.moffat_psf(fwhm=0.7*u.arcsec,pixel_scale = pixel_scale)
-        else:
-            self.psf = psf
         
-        self.extinction_reddening = extinction_reddening
-
-    def build_source(x):
-        ##Function which takes in array of values representing the free parameters
-        ## and return ArtPop Src object
-        return "Not Implemented yet"
+        elif self.obs_object.distribution.lower() == 'plummer':
+            plummer_param = self.obs_object.distribution_kwargs.copy()
+            plummer_param['scale_radius_kpc'] = plummer_param['scale_radius_as']*np.pi/(180*3600) * sp_use.distance.to(u.kpc).value
+            source_cur = artpop.source.PlummerSP(sp_use,
+                                            plummer_param['scale_radius_kpc'],
+                                            self.obs_object.im_dim,
+                                            self.obs_object.pixel_scale,
+                                            dx=plummer_param['dx'],
+                                            dy=plummer_param['dy'],
+                                            labels=None)
+        return source_cur
 
     def get_image(self,
                     x,
@@ -259,20 +198,20 @@ class ArtpopSimmer(ArtpopIsoLoader):
             cur_shuf_list = []
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
-            for j,filt_cur in enumerate(self.filters):
+            for j,filt_cur in enumerate(self.obs_object.filters):
 
-                cur_exp_time = self.exp_time[j] if isinstance(self.exp_time,Iterable) else self.exp_time
-                cur_sky_sb =  self.sky_sb[j] if isinstance(self.sky_sb,Iterable) else self.sky_sb
-                cur_psf = self.psf[j] if self.psf.ndim>2 else self.psf
-                cur_zpt = self.zpt[j] if isinstance(self.zpt,Iterable) else self.zpt
+                cur_exp_time = self.obs_object.exp_time[j] if isinstance(self.obs_object.exp_time,Iterable) else self.obs_object.exp_time
+                cur_sky_sb =  self.obs_object.sky_sb[j] if isinstance(self.obs_object.sky_sb,Iterable) else self.obs_object.sky_sb
+                cur_psf = self.obs_object.psf[j] if self.psf.ndim>2 else self.obs_object.psf
+                cur_zpt = self.obs_object.zpt[j] if isinstance(self.obs_object.zpt,Iterable) else self.obs_object.zpt
 
-                im_cur = self.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = cur_sky_sb)
+                im_cur = self.obs_object.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = cur_sky_sb)
                 cur_shuf_list.append(im_cur.image)
 
             img_list.append(cur_shuf_list)
         img_list = np.asarray(img_list).squeeze()
-        if self.extinction_reddening is not None:
-            img_list *= self.extinction_reddening[:,None,None]
+        if self.obs_object.extinction_reddening is not None:
+            img_list *= self.obs_object.extinction_reddening[:,None,None]
         
         if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
         return img_list
@@ -298,93 +237,46 @@ class ArtpopSimmer(ArtpopIsoLoader):
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
             print (src_cur.xy)
-            for j,filt_cur in enumerate(self.filters):
+            for j,filt_cur in enumerate(self.obs_object.filters):
 
-                cur_psf = self.psf[j] if self.psf.ndim>2 else self.psf
-                cur_zpt = self.zpt[j] if isinstance(self.zpt,Iterable) else self.zpt
+                cur_psf = self.obs_object.psf[j] if self.psf.obs_object.ndim>2 else self.obs_object.psf
+                cur_zpt = self.obs_object.zpt[j] if isinstance(self.obs_object.zpt,Iterable) else self.obs_object.zpt
 
                 im_cur = imager.observe(src_cur,filt_cur, psf = cur_psf,zpt = cur_zpt)
                 cur_shuf_list.append(im_cur.image)
 
             img_list.append(cur_shuf_list)
         
-        if self.extinction_reddening is not None:
-            img_list *= self.extinction_reddening[:,None,None]
+        if self.obs_object.extinction_reddening is not None:
+            img_list *= self.obs_object.extinction_reddening[:,None,None]
         img_list = np.asarray(img_list).squeeze()
         if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
         return img_list
 
 
 ### Below are specifc classes
-class SersicSSPSimmer(ArtpopSimmer):
-    "Class to simulate simple ssp with a sersic profile"
-    def __init__(self,
-                imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                sersic_params,
-                mag_limit = None,
-                mag_limit_band = None,
-                sky_sb = 22,
-                zpt = 27,
-                psf = None,
-                iso_kwargs = {}):
-
-        super().__init__(imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                mag_limit = mag_limit,
-                mag_limit_band = mag_limit_band,
-                sky_sb = sky_sb,
-                zpt = zpt,
-                psf = psf,
-                iso_kwargs = iso_kwargs)
-
-        self.sersic_params = sersic_params
+class SSPSimmer(ArtpopSimmer):
+    "Class to simulate simple ssp"
+    def __init__(self,obs_object: SilkScreenObservation):
+        super().__init__(obs_object)
         # log Ms, Dist, Z and log age
         self.N_free = 4
         self.param_descrip = ['log Ms/Msun','D (Mpc)', 'Z','log Age (Gyr)']
     def build_source(self, x):
         "x is array with logMs,D,Z,logAge"
         logMs, D, Z, logAge = x.tolist()
-        return self.build_sersic_ssp(logMs, D, Z, logAge,sersic_params = self.sersic_params)
+        return self.build_ssp(logMs, D, Z, logAge)
 
-class SersicTwoSSPSimmer(ArtpopSimmer):
+class TwoSSPSimmer(ArtpopSimmer):
     "Class to simulate a Two component ssp with a sersic profile"
-    def __init__(self,
-                imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                sersic_params,
-                mag_limit = None,
-                mag_limit_band = None,
-                sky_sb = 22,
-                zpt = 27,
-                psf = None):
+    def __init__(self,obs_object: SilkScreenObservation):
+        super().__init__(obs_object)
 
-        super().__init__(imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                mag_limit,
-                mag_limit_band,
-                sky_sb,
-                zpt,
-                psf)
-
-        self.sersic_params = sersic_params
         # log Ms, Dist, Z and log age
         self.N_free = 7
         self.param_descrip = ['log Ms/Msun','D (Mpc)', 'F_1', 'Z_1','log Age_1 (Gyr)', 'Z_2','log Age_2 (Gyr)']
 
-    def build_source(self, x):
+    def build_sp(self, x):
         logMs, D,F_1, Z_1, logAge_1,Z_2, logAge_2 = x.tolist()
         assert 0.<= F_1 <= 1
         F_2 = 1.-F_1
@@ -392,40 +284,18 @@ class SersicTwoSSPSimmer(ArtpopSimmer):
         ssp_1 = self.build_ssp(logMs + np.log10(F_1 + 1e-6), D, Z_1, logAge_1)
         ssp_2 = self.build_ssp(logMs + np.log10(F_2 + 1e-6), D, Z_2, logAge_2)
         sp_comb = ssp_1 + ssp_2
-        return self.build_sersic_source(sp_comb, sersic_params = self.sersic_params)
+        return sp_comb
 
-class SersicThreeSSPSimmer(ArtpopSimmer):
-    "Class to simulate a three component ssp with a sersic profile"
-    def __init__(self,
-                imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                sersic_params,
-                mag_limit = None,
-                mag_limit_band = None,
-                sky_sb = 22,
-                zpt = 27,
-                psf = None):
+class ThreeSSPSimmer(ArtpopSimmer):
+    "Class to simulate a three component sp"
+    def __init__(self,obs_object: SilkScreenObservation):
+        super().__init__(obs_object)
 
-        super().__init__(imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                mag_limit,
-                mag_limit_band,
-                sky_sb,
-                zpt,
-                psf)
-
-        self.sersic_params = sersic_params
         # log Ms, Dist, Z and log age
-        self.N_free = 7
+        self.N_free = 11
         self.param_descrip = ['D (Mpc)', 'logM_y','F_m', 'Z_y','log Age_y (Gyr)','logM_m', 'Z_m','log Age_m (Gyr)', 'logM_o','Z_o','log Age_o (Gyr)']
 
-    def build_source(self, x):
+    def build_sp(self, x):
         logMs, D,F_1, Z_1, logAge_1,F_2,Z_2, logAge_2, Z_3, logAge_3, = x.tolist()
         assert 0. <= F_1 + F_2 <= 1.
         F_3 = 1 - F_1 - F_2
@@ -434,41 +304,17 @@ class SersicThreeSSPSimmer(ArtpopSimmer):
         ssp_3 = self.build_ssp(logMs + np.log10(F_3 + 1e-6), D, Z_3, logAge_3)
 
         sp_comb = ssp_1 + ssp_2 + ssp_3
-        return self.build_sersic_source(sp_comb, sersic_params = self.sersic_params)
+        return sp_comb
 
-class DefaultSersicSimmer(ArtpopSimmer):
-    "Class to simulate a three component ssp with a sersic profile"
-    def __init__(self,
-                imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                sersic_params,
-                mag_limit = None,
-                mag_limit_band = None,
-                sky_sb = 22,
-                zpt = 27,
-                psf = None,
-                extinction_reddening = None):
+class DefaultDwarfSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 3 components, two of which have fixed ages with shared metallicity"
+    def __init__(self,obs_object: SilkScreenObservation):
+        super().__init__(obs_object)
 
-        super().__init__(imager,
-                filters,
-                exp_time,
-                im_dim,
-                pixel_scale,
-                mag_limit,
-                mag_limit_band,
-                sky_sb,
-                zpt,
-                psf,
-                extinction_reddening = extinction_reddening)
-
-        self.sersic_params = sersic_params
         self.N_free = 7
         self.param_descrip = ['D (Mpc)', 'logMs','F_y', 'F_m','log Age_m (Gyr)', 'Z']
 
-    def build_source(self, x):
+    def build_sp(self, x):
         D,logM, f_y,f_m, logAge_m, Z = x.tolist()
         
         f_o = 1. - (f_m + f_y) 
@@ -479,4 +325,4 @@ class DefaultSersicSimmer(ArtpopSimmer):
         ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
         ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
         sp_comb = ssp_y + ssp_m + ssp_o
-        return self.build_sersic_source(sp_comb, sersic_params = self.sersic_params)
+        return sp_comb

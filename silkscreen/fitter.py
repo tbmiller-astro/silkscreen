@@ -1,9 +1,90 @@
 import torch
-from collections import Iterable
 import copy
-
+import gc
 from sbi.inference import SNPE
-from .utils import parse_torch_sim_file
+from .utils import parse_torch_sim_file, run_sims, parse_input_file,get_injec_cutouts
+from .observation import SilkScreenObservation
+from .simmer import ArtpopSimmer
+from typing import Callable, Optional, Union, Iterable
+import sbi
+from sbi.inference import NeuralInference
+
+def fit_silkscreen_model( sim_class: ArtpopSimmer,
+    nde: Callable,
+    prior: Optional[torch.distributions.distribution.Distribution],
+    rounds: int,
+    num_sim: Union(int,Iterable),
+    device: Optional[str] = 'cpu',
+    pre_simulated_file: Optional[str] = None,
+    train_kwargs: Optional[dict] = None,
+    data_device: Optional[str] = None,
+    inject_image: Optional[str] = None,
+    save_dir: Optional[str] = './silkscreen_results/',
+    save_sims: Optional[bool] = False,
+    save_posterior: Optional[bool] = False,
+    )-> 'NeuralInference':
+
+    inference =  SNPE(prior = prior, density_estimator = nde, device = device)
+    
+    default_train_kwargs = {'training_batch_size': 100,'clip_max_norm': 8,'learning_rate':1e-4, 'validation_fraction':0.1,
+        'z_score_theta':'independent', 'z_score_x':'structured'}
+    default_train_kwargs.update(train_kwargs)
+
+    data_as_tensor = torch.Tensor(sim_class.obs_object.data)
+
+    if inject_image is not None:
+        inject_data = parse_input_file(inject_image,output='torch')
+        def sim_func(t): 
+            im = sim_class.get_image_for_injec(t,output = 'torch') + get_injec_cutouts(1,sim_class.obs_object.im_dim, array = inject_data, output = 'torch') 
+            return im[0]
+    else:
+        def sim_func(t): 
+            t = t.view(-1)
+            im = sim_class.get_image(t)
+            
+    if isinstance(num_sim, Iterable): assert len(num_sim) == rounds
+
+    for r in range(rounds):
+        if r == 0:
+            proposal = prior
+        else:
+            proposal = posterior.set_default_x(data_as_tensor[None])
+
+        num_r = num_sim[r] if isinstance(num_sim, Iterable) else num_sim
+
+        #Can also use pre-simulated images from file for initial round
+        if pre_simulated_file is not None and r == 0:
+            theta_cur,x_cur = parse_torch_sim_file(pre_simulated_file)
+        else:
+            theta_cur,x_cur = run_sims(sim_func, proposal, num_r)
+            
+        append_sims_kwargs = {'proposal':proposal, 'device':data_device}
+        inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
+        
+        if save_sims and not (pre_simulated_file is not None and r == 0):
+            torch.save([theta_cur,x_cur],f'{save_dir}sims_round_{r}.pt')
+
+        del theta_cur,x_cur
+
+        density_estimator = inference.train(**default_train_kwargs)
+        
+        # Return Posterior
+        posterior = inference.build_posterior(density_estimator)
+        
+        if save_posterior:
+            post = copy.deepcopy(posterior)
+            
+            post.set_default_x(data_as_tensor[None])
+            post.potential_fn.device = 'cpu'
+            if hasattr(post.prior.custom_prior):
+                post.prior.custom_prior.device = 'cpu'
+            post._device = 'cpu'
+
+            torch.save(post,f'{save_dir}posterior_round_{r}.pt')
+        
+        if device == 'cuda': torch.cuda.empty_cache()
+        gc.collect() 
+    return inference
 
 class SilkScreenFitter():
     def __init__(self,
@@ -25,16 +106,6 @@ class SilkScreenFitter():
         self.x_shape = x_obs.shape
         self.device = device
         self.inference = SNPE(prior = prior, density_estimator = nde, device = device)
-
-    def run_sims(self, proposal, num):
-        theta = proposal.sample((num,)).to('cpu')# Always need on cpu
-        x = []
-        for theta_cur in theta:
-            x.append(self.sim_function(theta_cur))
-
-        x = torch.stack(x)
-        return theta,x
-
 
     def train_model(self,
         rounds = 1,
@@ -109,17 +180,3 @@ class SilkScreenFitter():
         post._device = 'cpu'
 
         torch.save(post,file)
-'''
-def_train_kwargs.update({'max_num_epochs':30,'stop_after_epochs':30})
-self.density_estimator_init = self.inference.train(**def_train_kwargs)
-            
-# 'Freeze' parameters in CNN
-for key, param  in self.inference._neural_net.named_parameters():
-    if 'embedding' in key:
-        param.requires_grad = False
-
-# Continue training with just Flow
-def_train_kwargs.update({'learning_rate':1e-4,'force_first_round_loss':True})
-def_train_kwargs.pop('max_num_epochs')
-def_train_kwargs.pop('stop_after_epochs')
-density_estimator = self.inference.train(**def_train_kwargs) ''' 
