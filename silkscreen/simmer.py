@@ -9,7 +9,7 @@ import torch
 import os
 from astropy.table import Table
 import astropy.units as u
-from observation import SilkScreenObservation
+from .observation import SilkScreenObservation
 
 class ArtpopIsoLoader():
     def __init__(self,
@@ -18,9 +18,7 @@ class ArtpopIsoLoader():
                 ab_or_vega='ab',
                 mag_limit=None,
                 mag_limit_band=None,
-                imf = 'kroupa',
-                im_dim = 151,
-                pixel_scale = 0.168):
+                imf = 'kroupa',):
         """
         Class to load all isochrones into memory, wrapping Artpop
 
@@ -40,11 +38,6 @@ class ArtpopIsoLoader():
             Band in which the mag limit is calculated / applied.
         imf: str, optional (default: 'kroupa')
             IMF to sample stars from. Options include 'kroupa', 'chabrier'.
-        im_dim: int, optional (default: 151)
-            dimensions of the generated images. Images must be square.
-        pixel_scale: float, optional (default: 0.168)
-            pixel scale to apply to the image, in arcseconds per pixel. Set to depreciate
-            (and be set automatically).
         """
         #Set up all variables
         self.phot_system = phot_system
@@ -57,9 +50,6 @@ class ArtpopIsoLoader():
         self.imf = imf
         self.mag_limit = mag_limit
         self.mag_limit_band = mag_limit_band
-
-        self.im_dim = im_dim
-        self.pixel_scale = pixel_scale
 
         self.feh_grid = np.concatenate([np.arange(-3.0, -2., 0.5),
                                 np.arange(-2.0, 0.75, 0.25)])
@@ -150,22 +140,22 @@ class ArtpopSimmer(ArtpopIsoLoader):
     def __init__(self,obs_object: SilkScreenObservation):
         assert obs_object.verify_observations() # Make sure everything is gucci
         self.obs_object = obs_object
-
+        super().__init__(self.obs_object.imager.phot_system,**self.obs_object.iso_kwargs )
     def build_sp(self,x):
         raise NotImplementedError
 
     def build_source(self,x):
         sp_use = self.build_sp(x)
-        
+        defaults_kwargs = {'theta':0, 'ellip':0, 'dx':0, 'dy':0}
         if self.obs_object.distribution.lower() == 'sersic':
-            ser_param = self.obs_object.distribution_kwargs.copy()
+            ser_param = {**defaults_kwargs ,**self.obs_object.distribution_kwargs}
             ser_param['r_eff_kpc'] = ser_param['r_eff_as']*np.pi/(180*3600) * sp_use.distance.to(u.kpc).value
             source_cur = artpop.source.SersicSP(sp_use,
                                             ser_param['r_eff_kpc'],
                                             ser_param['n'],
                                             ser_param['theta'],
                                             ser_param['ellip'], 
-                                            self.obs_object.im_dim,
+                                            self.obs_object.im_dims,
                                             self.obs_object.pixel_scale,
                                             num_r_eff=10,
                                             dx=ser_param['dx'],
@@ -173,11 +163,11 @@ class ArtpopSimmer(ArtpopIsoLoader):
                                             labels=None)
         
         elif self.obs_object.distribution.lower() == 'plummer':
-            plummer_param = self.obs_object.distribution_kwargs.copy()
+            plummer_param = {**defaults_kwargs ,**self.obs_object.distribution_kwargs}
             plummer_param['scale_radius_kpc'] = plummer_param['scale_radius_as']*np.pi/(180*3600) * sp_use.distance.to(u.kpc).value
             source_cur = artpop.source.PlummerSP(sp_use,
                                             plummer_param['scale_radius_kpc'],
-                                            self.obs_object.im_dim,
+                                            self.obs_object.im_dims,
                                             self.obs_object.pixel_scale,
                                             dx=plummer_param['dx'],
                                             dy=plummer_param['dy'],
@@ -202,10 +192,10 @@ class ArtpopSimmer(ArtpopIsoLoader):
 
                 cur_exp_time = self.obs_object.exp_time[j] if isinstance(self.obs_object.exp_time,Iterable) else self.obs_object.exp_time
                 cur_sky_sb =  self.obs_object.sky_sb[j] if isinstance(self.obs_object.sky_sb,Iterable) else self.obs_object.sky_sb
-                cur_psf = self.obs_object.psf[j] if self.psf.ndim>2 else self.obs_object.psf
+                cur_psf = self.obs_object.psf[j] if self.obs_object.psf.ndim>2 else self.obs_object.psf
                 cur_zpt = self.obs_object.zpt[j] if isinstance(self.obs_object.zpt,Iterable) else self.obs_object.zpt
 
-                im_cur = self.obs_object.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = cur_sky_sb)
+                im_cur = self.obs_object.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = cur_sky_sb, zpt = cur_zpt)
                 cur_shuf_list.append(im_cur.image)
 
             img_list.append(cur_shuf_list)
@@ -239,7 +229,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
             print (src_cur.xy)
             for j,filt_cur in enumerate(self.obs_object.filters):
 
-                cur_psf = self.obs_object.psf[j] if self.psf.obs_object.ndim>2 else self.obs_object.psf
+                cur_psf = self.obs_object.psf[j] if self.obs_object.psf.ndim>2 else self.obs_object.psf
                 cur_zpt = self.obs_object.zpt[j] if isinstance(self.obs_object.zpt,Iterable) else self.obs_object.zpt
 
                 im_cur = imager.observe(src_cur,filt_cur, psf = cur_psf,zpt = cur_zpt)
@@ -262,7 +252,7 @@ class SSPSimmer(ArtpopSimmer):
         # log Ms, Dist, Z and log age
         self.N_free = 4
         self.param_descrip = ['log Ms/Msun','D (Mpc)', 'Z','log Age (Gyr)']
-    def build_source(self, x):
+    def build_sp(self, x):
         "x is array with logMs,D,Z,logAge"
         logMs, D, Z, logAge = x.tolist()
         return self.build_ssp(logMs, D, Z, logAge)

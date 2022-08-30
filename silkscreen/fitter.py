@@ -13,16 +13,53 @@ def fit_silkscreen_model( sim_class: ArtpopSimmer,
     nde: Callable,
     prior: Optional[torch.distributions.distribution.Distribution],
     rounds: int,
-    num_sim: Union(int,Iterable),
+    num_sim: Union[int,Iterable],
     device: Optional[str] = 'cpu',
     pre_simulated_file: Optional[str] = None,
     train_kwargs: Optional[dict] = None,
-    data_device: Optional[str] = None,
+    data_device: Optional[str] = 'cpu',
     inject_image: Optional[str] = None,
     save_dir: Optional[str] = './silkscreen_results/',
     save_sims: Optional[bool] = False,
     save_posterior: Optional[bool] = False,
     )-> 'NeuralInference':
+    """Function used to train SilkScreen Model
+
+    Parameters
+    ----------
+    sim_class : ArtpopSimmer
+        ArtpopSimmer class used to simulate observations
+    nde : 
+        posterior_nn network from sbi
+        _description_
+    prior : Optional[torch.distributions.distribution.Distribution]
+        Prior used to draw parameters from
+    rounds : int
+        Number of training and simulation rounds, more rounds means more targeted inference
+    num_sim : Union(list, int)
+        Number of simulations to simulate/train per round, can be list or int
+    device : Optional[str], optional
+        device used to perform training, highly reccomemded to be 'cuda', by default 'cpu'
+    pre_simulated_file : Optional[str], optional
+        locaiton of file containing pre-simulated parameters and data to be used in the first round of training, by default None
+    train_kwargs : Optional[dict], optional
+        kwargs passed to `inference.train()` method, by default None and defaults will be used
+    data_device : Optional[str], optional
+        where to store data, defaults is the 'cpu' to free up more memory on the 'gpu' if used, but this is slightly slower
+    inject_image : Optional[str], optional
+        location of file containing real data to inject simulated data into. can be 'pt','npt' or 'fits'
+    save_dir : Optional[str], optional
+        Location to save results, by default './silkscreen_results/'
+    save_sims : Optional[bool], optional
+        Whether or not to save simulated data, by default False
+    save_posterior : Optional[bool], optional
+        where or not to pickle posterior, by default False
+
+    Returns
+    -------
+    NeuralInference
+        sbi Neural Inference object containing trained model
+    """
 
     inference =  SNPE(prior = prior, density_estimator = nde, device = device)
     
@@ -37,11 +74,13 @@ def fit_silkscreen_model( sim_class: ArtpopSimmer,
         def sim_func(t): 
             im = sim_class.get_image_for_injec(t,output = 'torch') + get_injec_cutouts(1,sim_class.obs_object.im_dim, array = inject_data, output = 'torch') 
             return im[0]
+    
     else:
         def sim_func(t): 
             t = t.view(-1)
             im = sim_class.get_image(t)
-            
+            return im
+    
     if isinstance(num_sim, Iterable): assert len(num_sim) == rounds
 
     for r in range(rounds):

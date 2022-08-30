@@ -1,8 +1,7 @@
 
-from lib2to3.pgen2.token import OP
 from typing import Optional, Union, Iterable
 import artpop
-import utils
+from . import utils
 import numpy as np
 
 class SilkScreenObservation(object):
@@ -34,17 +33,15 @@ class SilkScreenObservation(object):
     '''
     def __init__(self,
             data: np.array,
-            imager: Union(str, artpop.ArtImager),
+            imager: Union[str, 'artpop.ArtImager'],
             filters: Iterable,
-            exp_time: Union(float, Iterable),
+            exp_time: Union[float, Iterable],
             pixel_scale: float,
-            zpt: Union(float, Iterable),
+            zpt: Union[float, Iterable],
             distribution: str,
             distribtuion_kwargs: dict,
-            mag_limit: Optional[float] = None,
-            mag_limit_band: Optional[str] = None,
-            sky_sb: Optional[Union(float, Iterable)] = 21.,
-            psf: Optional[Iterable]= None,
+            psf: 'np.array',
+            sky_sb: Optional[Union[float, Iterable]] = 21.,
             iso_kwargs: Optional[dict] = {},
             extinction_reddening: Optional[Iterable]= None):
         
@@ -70,8 +67,6 @@ class SilkScreenObservation(object):
         self.filters = filters # Check filters in artpop
 
         self.exp_time = exp_time
-        self.mag_limit = mag_limit
-        self.mag_limit_band = mag_limit_band
         self.sky_sb = sky_sb
         self.zpt = zpt
         self.psf = psf
@@ -88,6 +83,6 @@ class SilkScreenObservation(object):
         if self.distribution.lower() == 'plummer':
             assert 'scale_radius_as' in self.distribution_kwargs
 
-    def verify_observations():
+    def verify_observations(self):
         ### Run checks to make sure all is well.
         return True
