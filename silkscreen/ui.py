@@ -200,3 +200,174 @@ class SilkscreenFitter():
         self.posterior = self.fitter.train_model(rounds=rounds,
                                                 num_sim=num_simulations)
         self.fitter.pickle_posterior(save_posterior_to)
+
+
+####
+# Imad's Newer Class
+####
+from .observation import SilkScreenObservation
+from .simmer import ArtpopSimmer
+import torch
+import copy
+import gc
+from sbi.inference import SNPE
+from .utils import parse_torch_sim_file, run_sims, parse_input_file,get_injec_cutouts
+from .observation import SilkScreenObservation
+from .simmer import ArtpopSimmer
+from typing import Callable, Optional, Union, Iterable
+import sbi
+from sbi.inference import NeuralInference
+
+class Silkscreen():
+
+    def __init__(self,
+                obs_object:SilkScreenObservation,
+                simulator: ArtpopSimmer):
+        """
+        Container Class for running SilkScreen
+
+        Parameters
+        ----------
+        obs_object: SilkScreenObservation
+            the object containing the observation parameters and image data
+        simulator: ArtpopSimmer (callable)
+            Name of the ArtpopSimmer to use for simulations
+        """
+        self.obs_object = obs_object  
+        self.simmer = simulator(obs_object) 
+    
+    def list_model_params(self):
+        print('The current model parameters are:')
+        print(self.simmer.param_descrip)
+    
+    def simulate_images(self,
+                        params: Iterable,
+                        n_images: int = 1,
+                        ):
+        """
+        Simulate images using the established simulator.
+
+        Parameters
+        ----------
+        params: Iterable
+            the `theta` or input parameters to the simulator. The required list for a setup is accessible via the `.list_model_params()` method.
+        n_images: int, default: 1
+            number of independent constructions/images to return
+        """
+        img_list = []
+        for i in range(n_images):
+            img_list.append(self.simmer.get_image(params))
+        return img_list
+            
+
+    def train_and_fit(self, 
+                    nde: Callable,
+                    prior: Optional[torch.distributions.distribution.Distribution],
+                    rounds: int,
+                    num_sim: Union[int,Iterable],
+                    device: Optional[str] = 'cpu',
+                    pre_simulated_file: Optional[str] = None,
+                    train_kwargs: Optional[dict] = None,
+                    data_device: Optional[str] = 'cpu',
+                    inject_image: Optional[str] = None,
+                    save_dir: Optional[str] = './silkscreen_results/',
+                    save_sims: Optional[bool] = False,
+                    save_posterior: Optional[bool] = False,
+                    )-> 'NeuralInference':
+        """Function used to train SilkScreen Model
+        Parameters
+        ----------
+        nde : 
+            posterior_nn network from sbi
+            _description_
+        prior : Optional[torch.distributions.distribution.Distribution]
+            Prior used to draw parameters from
+        rounds : int
+            Number of training and simulation rounds, more rounds means more targeted inference
+        num_sim : Union(list, int)
+            Number of simulations to simulate/train per round, can be list or int
+        device : Optional[str], optional
+            device used to perform training, highly reccomemded to be 'cuda', by default 'cpu'
+        pre_simulated_file : Optional[str], optional
+            locaiton of file containing pre-simulated parameters and data to be used in the first round of training, by default None
+        train_kwargs : Optional[dict], optional
+            kwargs passed to `inference.train()` method, by default None and defaults will be used
+        data_device : Optional[str], optional
+            where to store data, defaults is the 'cpu' to free up more memory on the 'gpu' if used, but this is slightly slower
+        inject_image : Optional[str], optional
+            location of file containing real data to inject simulated data into. can be 'pt','npt' or 'fits'
+        save_dir : Optional[str], optional
+            Location to save results, by default './silkscreen_results/'
+        save_sims : Optional[bool], optional
+            Whether or not to save simulated data, by default False
+        save_posterior : Optional[bool], optional
+            where or not to pickle posterior, by default False
+        Returns
+        -------
+        NeuralInference
+            sbi Neural Inference object containing trained model
+        """
+
+        inference =  SNPE(prior = prior, density_estimator = nde, device = device)
+        
+        default_train_kwargs = {'training_batch_size': 100,'clip_max_norm': 8,'learning_rate':1e-4, 'validation_fraction':0.1,
+            'z_score_theta':'independent', 'z_score_x':'structured'}
+        default_train_kwargs.update(train_kwargs)
+        sim_class = self.simmer
+        data_as_tensor = torch.Tensor(sim_class.obs_object.data)
+
+        if inject_image is not None:
+            inject_data = parse_input_file(inject_image,output='torch')
+            def sim_func(t): 
+                im = sim_class.get_image_for_injec(t,output = 'torch') + get_injec_cutouts(1,sim_class.obs_object.im_dim, array = inject_data, output = 'torch') 
+                return im[0]
+        
+        else:
+            def sim_func(t): 
+                t = t.view(-1)
+                im = sim_class.get_image(t)
+                return im
+        
+        if isinstance(num_sim, Iterable): assert len(num_sim) == rounds
+
+        for r in range(rounds):
+            if r == 0:
+                proposal = prior
+            else:
+                proposal = posterior.set_default_x(data_as_tensor[None])
+
+            num_r = num_sim[r] if isinstance(num_sim, Iterable) else num_sim
+
+            #Can also use pre-simulated images from file for initial round
+            if pre_simulated_file is not None and r == 0:
+                theta_cur,x_cur = parse_torch_sim_file(pre_simulated_file)
+            else:
+                theta_cur,x_cur = run_sims(sim_func, proposal, num_r)
+                
+            append_sims_kwargs = {'proposal':proposal, 'device':data_device}
+            inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
+            
+            if save_sims and not (pre_simulated_file is not None and r == 0):
+                torch.save([theta_cur,x_cur],f'{save_dir}sims_round_{r}.pt')
+
+            del theta_cur,x_cur
+
+            density_estimator = inference.train(**default_train_kwargs)
+            
+            # Return Posterior
+            posterior = inference.build_posterior(density_estimator)
+            
+            if save_posterior:
+                post = copy.deepcopy(posterior)
+                
+                post.set_default_x(data_as_tensor[None])
+                post.potential_fn.device = 'cpu'
+                if hasattr(post.prior.custom_prior):
+                    post.prior.custom_prior.device = 'cpu'
+                post._device = 'cpu'
+
+                torch.save(post,f'{save_dir}posterior_round_{r}.pt')
+            
+            if device == 'cuda': torch.cuda.empty_cache()
+            gc.collect() 
+        return inference
