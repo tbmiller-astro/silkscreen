@@ -1,10 +1,10 @@
 
+from typing import Optional, Union, Iterable
 import artpop
 import astropy.units as u
 import numpy as np
 import glob
 import copy
-from collections import Iterable
 import torch
 import os
 from astropy.table import Table
@@ -138,13 +138,12 @@ class ArtpopIsoLoader():
 class ArtpopSimmer(ArtpopIsoLoader):
     "Base Class to produce many artpop simulations based on SilkScreen Observations Object"
     def __init__(self,obs_object: SilkScreenObservation):
-        assert obs_object.verify_observations() # Make sure everything is gucci
         self.obs_object = obs_object
         super().__init__(self.obs_object.imager.phot_system,**self.obs_object.iso_kwargs )
     def build_sp(self,x):
         raise NotImplementedError
 
-    def build_source(self,x):
+    def build_source(self,x: torch.Tensor):
         sp_use = self.build_sp(x)
         defaults_kwargs = {'theta':0, 'ellip':0, 'dx':0, 'dy':0}
         if self.obs_object.distribution.lower() == 'sersic':
@@ -175,8 +174,8 @@ class ArtpopSimmer(ArtpopIsoLoader):
         return source_cur
 
     def get_image(self,
-                    x,
-                    num_shuffle = 1,
+                    x: torch.Tensor,
+                    num_shuffle: Optional[int] = 1,
                     output = 'numpy'):
 
         src_cur = self.build_source(x)
@@ -226,7 +225,6 @@ class ArtpopSimmer(ArtpopIsoLoader):
             cur_shuf_list = []
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
-            print (src_cur.xy)
             for j,filt_cur in enumerate(self.obs_object.filters):
 
                 cur_psf = self.obs_object.psf[j] if self.obs_object.psf.ndim>2 else self.obs_object.psf
@@ -244,73 +242,39 @@ class ArtpopSimmer(ArtpopIsoLoader):
         return img_list
 
 
-### Below are specifc classes
 class SSPSimmer(ArtpopSimmer):
     "Class to simulate simple ssp"
     def __init__(self,obs_object: SilkScreenObservation):
         super().__init__(obs_object)
         # log Ms, Dist, Z and log age
         self.N_free = 4
-        self.param_descrip = ['log Ms/Msun','D (Mpc)', 'Z','log Age (Gyr)']
+        self.param_descrip = ['log Ms/Msun','D (Mpc)', 'Z','Age (Gyr)']
+
     def build_sp(self, x):
         "x is array with logMs,D,Z,logAge"
-        logMs, D, Z, logAge = x.tolist()
+        logMs, D, Z, Age = x.tolist()
+        logAge = np.log10(Age) + 9.
         return self.build_ssp(logMs, D, Z, logAge)
 
-class TwoSSPSimmer(ArtpopSimmer):
-    "Class to simulate a Two component ssp with a sersic profile"
-    def __init__(self,obs_object: SilkScreenObservation):
-        super().__init__(obs_object)
-
-        # log Ms, Dist, Z and log age
-        self.N_free = 7
-        self.param_descrip = ['log Ms/Msun','D (Mpc)', 'F_1', 'Z_1','log Age_1 (Gyr)', 'Z_2','log Age_2 (Gyr)']
-
-    def build_sp(self, x):
-        logMs, D,F_1, Z_1, logAge_1,Z_2, logAge_2 = x.tolist()
-        assert 0.<= F_1 <= 1
-        F_2 = 1.-F_1
-
-        ssp_1 = self.build_ssp(logMs + np.log10(F_1 + 1e-6), D, Z_1, logAge_1)
-        ssp_2 = self.build_ssp(logMs + np.log10(F_2 + 1e-6), D, Z_2, logAge_2)
-        sp_comb = ssp_1 + ssp_2
-        return sp_comb
-
-class ThreeSSPSimmer(ArtpopSimmer):
-    "Class to simulate a three component sp"
-    def __init__(self,obs_object: SilkScreenObservation):
-        super().__init__(obs_object)
-
-        # log Ms, Dist, Z and log age
-        self.N_free = 11
-        self.param_descrip = ['D (Mpc)', 'logM_y','F_m', 'Z_y','log Age_y (Gyr)','logM_m', 'Z_m','log Age_m (Gyr)', 'logM_o','Z_o','log Age_o (Gyr)']
-
-    def build_sp(self, x):
-        logMs, D,F_1, Z_1, logAge_1,F_2,Z_2, logAge_2, Z_3, logAge_3, = x.tolist()
-        assert 0. <= F_1 + F_2 <= 1.
-        F_3 = 1 - F_1 - F_2
-        ssp_1 = self.build_ssp(logMs + np.log10(F_1 + 1e-6), D, Z_1, logAge_1)
-        ssp_2 = self.build_ssp(logMs + np.log10(F_2 + 1e-6), D, Z_2, logAge_2)
-        ssp_3 = self.build_ssp(logMs + np.log10(F_3 + 1e-6), D, Z_3, logAge_3)
-
-        sp_comb = ssp_1 + ssp_2 + ssp_3
-        return sp_comb
 
 class DefaultDwarfSimmer(ArtpopSimmer):
-    "Class to simulate the default dwarf model with 3 components, two of which have fixed ages with shared metallicity"
+    "Class to simulate the default dwarf model with 3 components , two of which have fixed ages with shared metallicity"
     def __init__(self,obs_object: SilkScreenObservation):
         super().__init__(obs_object)
 
         self.N_free = 7
-        self.param_descrip = ['D (Mpc)', 'logMs','F_y', 'F_m','log Age_m (Gyr)', 'Z']
+        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)', 'F_m','Age_M (Gyr)', ]
 
     def build_sp(self, x):
-        D,logM, f_y,f_m, logAge_m, Z = x.tolist()
+        D,logM, Z, f_y, age_y, f_m, age_m = x.tolist()
         
-        f_o = 1. - (f_m + f_y) 
-        logAge_o = 10.
-        logAge_y = 8.
-        
+        # Fixed ages for the young and old component
+        logAge_o = 10.08
+        logAge_m = np.log10(age_m) + 9.
+        logAge_y = np.log10(age_y) + 9.
+
+        f_o = 1. - f_m - f_y
+
         ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
         ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
         ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)

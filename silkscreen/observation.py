@@ -33,14 +33,14 @@ class SilkScreenObservation(object):
     '''
     def __init__(self,
             data: np.array,
-            imager: Union[str, 'artpop.ArtImager'],
+            imager: Union[str, artpop.ArtImager],
             filters: Iterable,
             exp_time: Union[float, Iterable],
             pixel_scale: float,
             zpt: Union[float, Iterable],
             distribution: str,
             distribtuion_kwargs: dict,
-            psf: 'np.array',
+            psf: np.array,
             sky_sb: Optional[Union[float, Iterable]] = 21.,
             iso_kwargs: Optional[dict] = {},
             extinction_reddening: Optional[Iterable]= None):
@@ -60,10 +60,13 @@ class SilkScreenObservation(object):
             assert imager in ['DECam', 'HSC']
             self.imager = getattr(utils, f'get_{imager}_imager')()
         else:
+            assert  isinstance(imager, artpop.ArtImager),'imager argument must be an artpop.ArtImager object'
             self.imager = imager
+        
         self.pixel_scale = pixel_scale
 
-        assert len(filters) == self.num_filt
+        assert len(filters) == self.num_filt, f'Mismatch between data and filters, data implies {filters} filters but specified {self.num_filt}'
+         
         self.filters = filters # Check filters in artpop
 
         self.exp_time = exp_time
@@ -78,11 +81,7 @@ class SilkScreenObservation(object):
         self.distribution_kwargs = distribtuion_kwargs
 
         if distribution.lower() == 'sersic':
-            assert 'r_eff_as' in self.distribtuion_kwargs
-            assert 'n' in self.distribtuion_kwargs
-        if self.distribution.lower() == 'plummer':
-            assert 'scale_radius_as' in self.distribution_kwargs
+            assert ('r_eff_as' in self.distribtuion_kwargs and 'n' in self.distribtuion_kwargs),"When using a sersic distribution must specify at least 'r_eff_as' and 'n' in 'distribtuion_kwargs'"
 
-    def verify_observations(self):
-        ### Run checks to make sure all is well.
-        return True
+        if self.distribution.lower() == 'plummer':
+            assert 'scale_radius_as' in self.distribution_kwargs, "When using a plummer distribution must specify at least scale_radius_as' in 'distribtuion_kwargs'"

@@ -1,6 +1,7 @@
 import torch
 import copy
 import gc
+from tqdm import tqdm
 from sbi.inference import SNPE
 from .utils import parse_torch_sim_file, run_sims, parse_input_file,get_injec_cutouts
 from .observation import SilkScreenObservation
@@ -9,14 +10,16 @@ from typing import Callable, Optional, Union, Iterable
 import sbi
 from sbi.inference import NeuralInference
 
-def fit_silkscreen_model( sim_class: ArtpopSimmer,
+def fit_silkscreen_model(
+    observation: SilkScreenObservation,
+    simmer: type,
     nde: Callable,
-    prior: Optional[torch.distributions.distribution.Distribution],
+    prior: torch.distributions.distribution.Distribution,
     rounds: int,
     num_sim: Union[int,Iterable],
     device: Optional[str] = 'cpu',
     pre_simulated_file: Optional[str] = None,
-    train_kwargs: Optional[dict] = None,
+    train_kwargs: Optional[dict] = {},
     data_device: Optional[str] = 'cpu',
     inject_image: Optional[str] = None,
     save_dir: Optional[str] = './silkscreen_results/',
@@ -27,19 +30,20 @@ def fit_silkscreen_model( sim_class: ArtpopSimmer,
 
     Parameters
     ----------
+    observations :  SilkScreenObservation
+        observation object used to specify observations
     sim_class : ArtpopSimmer
-        ArtpopSimmer class used to simulate observations
+        ArtpopSimmer class used to simulate data
     nde : 
-        posterior_nn network from sbi
-        _description_
-    prior : Optional[torch.distributions.distribution.Distribution]
-        Prior used to draw parameters from
+        posterior_nn network from sbi, if none
+    prior : torch.distributions.distribution.Distribution
+        Prior used to draw parameters from, not strictly required if only training one round
     rounds : int
         Number of training and simulation rounds, more rounds means more targeted inference
     num_sim : Union(list, int)
         Number of simulations to simulate/train per round, can be list or int
     device : Optional[str], optional
-        device used to perform training, highly reccomemded to be 'cuda', by default 'cpu'
+        device used to perform training, highly reccomemded to be 'cuda' of 'gpu', by default 'cpu'
     pre_simulated_file : Optional[str], optional
         locaiton of file containing pre-simulated parameters and data to be used in the first round of training, by default None
     train_kwargs : Optional[dict], optional
@@ -61,24 +65,25 @@ def fit_silkscreen_model( sim_class: ArtpopSimmer,
         sbi Neural Inference object containing trained model
     """
 
+    sim_class = simmer(observation)
+    
     inference =  SNPE(prior = prior, density_estimator = nde, device = device)
     
-    default_train_kwargs = {'training_batch_size': 100,'clip_max_norm': 8,'learning_rate':1e-4, 'validation_fraction':0.1,
-        'z_score_theta':'independent', 'z_score_x':'structured'}
+    default_train_kwargs = {'training_batch_size': 128,'clip_max_norm': 8,'learning_rate':1e-4, 'validation_fraction':0.1,'num_atoms':5} #Default training hyperparameters
     default_train_kwargs.update(train_kwargs)
 
-    data_as_tensor = torch.Tensor(sim_class.obs_object.data)
+    data_as_tensor = torch.Tensor(observation.data)
 
     if inject_image is not None:
         inject_data = parse_input_file(inject_image,output='torch')
         def sim_func(t): 
-            im = sim_class.get_image_for_injec(t,output = 'torch') + get_injec_cutouts(1,sim_class.obs_object.im_dim, array = inject_data, output = 'torch') 
+            im = sim_class.get_image_for_injec(t,output = 'torch') + get_injec_cutouts(1,observation.im_dim, array = inject_data, output = 'torch') 
             return im[0]
     
     else:
         def sim_func(t): 
             t = t.view(-1)
-            im = sim_class.get_image(t)
+            im = sim_class.get_image(t, output = 'torch')
             return im
     
     if isinstance(num_sim, Iterable): assert len(num_sim) == rounds
@@ -97,7 +102,7 @@ def fit_silkscreen_model( sim_class: ArtpopSimmer,
         else:
             theta_cur,x_cur = run_sims(sim_func, proposal, num_r)
             
-        append_sims_kwargs = {'proposal':proposal, 'device':data_device}
+        append_sims_kwargs = {'proposal':proposal, 'data_device':data_device}
         inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
         
         if save_sims and not (pre_simulated_file is not None and r == 0):
@@ -107,7 +112,6 @@ def fit_silkscreen_model( sim_class: ArtpopSimmer,
 
         density_estimator = inference.train(**default_train_kwargs)
         
-        # Return Posterior
         posterior = inference.build_posterior(density_estimator)
         
         if save_posterior:
@@ -122,7 +126,7 @@ def fit_silkscreen_model( sim_class: ArtpopSimmer,
             torch.save(post,f'{save_dir}posterior_round_{r}.pt')
         
         if device == 'cuda': torch.cuda.empty_cache()
-        gc.collect() 
+        gc.collect()
     return inference
 
 class SilkScreenFitter():

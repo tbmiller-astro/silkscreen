@@ -1,5 +1,5 @@
 astropy
 numpy
 torch
-sbi==0.18
-artpop
+sbi>=0.18
+artpop>=0.1.1

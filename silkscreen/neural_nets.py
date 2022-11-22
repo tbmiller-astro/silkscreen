@@ -141,7 +141,7 @@ class DenseNet(nn.Module):
         num_classes: int = 1000,
         num_filters: int = 3,
         memory_efficient: bool = False,
-        norm_asinh: bool =  True,
+        norm_asinh: bool =  False,
     ) -> None:
 
         super().__init__()
