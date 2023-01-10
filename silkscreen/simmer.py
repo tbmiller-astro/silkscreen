@@ -258,12 +258,12 @@ class SSPSimmer(ArtpopSimmer):
 
 
 class DefaultDwarfSimmer(ArtpopSimmer):
-    "Class to simulate the default dwarf model with 3 components , two of which have fixed ages with shared metallicity"
+    "Class to simulate the default dwarf model with 3 components , two of which have fixed ages with shared metallicity" ## DOESN'T THIS FIT FOR TWO AGES? SO ONLY ONE FIXED? BUT Z FIXED FOR ALL? COULD BE CONFUSING PHRASING FOR USERS
     def __init__(self,obs_object: SilkScreenObservation):
         super().__init__(obs_object)
 
         self.N_free = 7
-        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)', 'F_m','Age_M (Gyr)', ]
+        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)', 'F_m','Age_M (Gyr)']#, ] (TYPO??)
 
     def build_sp(self, x):
         D,logM, Z, f_y, age_y, f_m, age_m = x.tolist()
