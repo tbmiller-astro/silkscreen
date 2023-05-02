@@ -39,7 +39,7 @@ class SilkScreenObservation(object):
             pixel_scale: float,
             zpt: Union[float, Iterable],
             distribution: str,
-            distribtuion_kwargs: dict,
+            distribution_kwargs: dict,
             psf: np.array,
             sky_sb: Optional[Union[float, Iterable]] = 21.,
             iso_kwargs: Optional[dict] = {},
@@ -51,7 +51,7 @@ class SilkScreenObservation(object):
             self.im_dim = data.shape
         elif len(data.shape) == 3:
             self.num_filt = data.shape[0]
-            self.im_dims = data.shape[1:]
+            self.im_dim = data.shape[1:]
         else:
             print ('Data must be either 2 or 3 dimensions')
             raise AttributeError
@@ -78,10 +78,10 @@ class SilkScreenObservation(object):
         
         assert distribution.lower() in ['sersic', 'plummer']
         self.distribution = distribution
-        self.distribution_kwargs = distribtuion_kwargs
+        self.distribution_kwargs = distribution_kwargs
 
         if distribution.lower() == 'sersic':
-            assert ('r_eff_as' in self.distribtuion_kwargs and 'n' in self.distribtuion_kwargs),"When using a sersic distribution must specify at least 'r_eff_as' and 'n' in 'distribtuion_kwargs'"
+            assert ('r_eff_as' in self.distribution_kwargs and 'n' in self.distribution_kwargs),"When using a sersic distribution must specify at least 'r_eff_as' and 'n' in 'distribtuion_kwargs'"
 
         if self.distribution.lower() == 'plummer':
             assert 'scale_radius_as' in self.distribution_kwargs, "When using a plummer distribution must specify at least scale_radius_as' in 'distribtuion_kwargs'"

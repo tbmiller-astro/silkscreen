@@ -4,7 +4,6 @@ import numpy as np
 from torch import save as torch_save
 from silkscreen import simmer
 from silkscreen import utils as ssu
-from silkscreen.DenseNet import DenseNet
 from sbi.utils.get_nn_models import posterior_nn
 
 from typing import Union
