@@ -1,12 +1,138 @@
 import torch
 import numpy as np
 from sbi.utils import BoxUniform,MultipleIndependent
-from scipy.stats import truncnorm
 from typing import Iterable,Optional
-from torch.distributions import Dirichlet
 from torch.distributions.constraints import independent,interval
+from sbi.utils.user_input_checks_utils import ScipyPytorchWrapper, MultipleIndependent, CustomPriorWrapper
+from scipy.stats import truncnorm
+from scipy.special import erf
+from torch import tensor
+from torch.distributions import Uniform
+from typing import Iterable, Optional
+import numpy as np
+from sbi.utils import BoxUniform
 
-def get_default_dwarf_prior(
+class MZRPrior():
+    def __init__(self,logM_bounds, frac_expand = 1.5, device = 'cpu'):
+        self.logM_bounds = logM_bounds
+        self.logM_dist = build_uniform_dist(logM_bounds,device)
+        self.MZR_sig = 0.17*frac_expand
+        self.Z_bounds = [-2.25,0.5]
+        self.device = device
+        
+    @staticmethod
+    def KirbyMZR(logM):
+        return -1.69 + 0.3*(logM - 6.)
+    
+    def _log_prob_Z(self,Z,logM):
+        Z_mean = self.KirbyMZR(logM).cpu().numpy()
+        a = (self.Z_bounds[0]- Z_mean)/self.MZR_sig
+        b = (self.Z_bounds[1]- Z_mean)/self.MZR_sig
+        return  torch.Tensor ( truncnorm.logpdf(Z.cpu(),a,b, Z_mean, self.MZR_sig ) ).to(self.device)
+    
+    def _sample_Z(self, logM, sample_shape): 
+        Z_mean = self.KirbyMZR(logM.cpu().view(sample_shape)).cpu()
+        a = (self.Z_bounds[0] - Z_mean)/self.MZR_sig
+        b = (self.Z_bounds[1] - Z_mean)/self.MZR_sig
+        Z_samps =  truncnorm.ppf(np.random.uniform(size = sample_shape),a,b, Z_mean, self.MZR_sig ) 
+        if not isinstance(Z_samps,Iterable):
+            return  torch.tensor(Z_samps, dtype=torch.float32).to(self.device)
+        return torch.Tensor(Z_samps).to(self.device)
+    
+    def log_prob(self,x):
+        log_prob = self.logM_dist.log_prob(x[:,0])
+        log_prob += self._log_prob_Z(x[:,1],x[:,0])
+        return log_prob
+    
+    def sample(self, sample_shape = torch.Size([])):
+        logM_samps = self.logM_dist.sample(sample_shape=sample_shape).view(sample_shape)
+        Z_samps = self._sample_Z(logM_samps, sample_shape)
+        return torch.stack([logM_samps, Z_samps]).T
+
+class MyTruncNorm():
+    def __init__(self,loc,sig, bounds, device = 'cpu'):
+        self.loc = loc
+        self.sig = sig
+        self.a = (bounds[0] - self.loc)/self.sig
+        self.b = (bounds[1] - self.loc)/self.sig
+        self.Z = 0.5* ( erf(self.b/np.sqrt(2)) - erf(self.a/np.sqrt(2)) )
+        self.phi_a = 1./np.sqrt(2*np.pi)* np.exp(-0.5*self.a**2)
+        self.phi_b = 1./np.sqrt(2*np.pi)* np.exp(-0.5*self.b**2)
+        self.device = device
+        
+    @property
+    def mean(self):
+        return self.loc + (self.phi_a - self.phi_b)/self.Z * self.sig
+    
+    @property
+    def variance(self):
+        var_frac = 1. - (self.b*self.phi_b - self.a*self.phi_a)/self.Z - (self.phi_a - self.phi_b)**2/self.Z**2 
+        return self.sig**2 *var_frac
+    
+    def log_prob(self, x):
+        x_cpu = x.cpu().numpy()
+        return torch.Tensor ( truncnorm.logpdf(x_cpu,self.a,self.b, self.loc, self.sig ) ).to(self.device)
+
+    def sample(self,sample_shape = torch.Size([])):
+        samps =  truncnorm.ppf(np.random.uniform(size = sample_shape),self.a,self.b, self.loc, self.sig ) 
+        if not isinstance(samps,Iterable):
+            return  torch.tensor([samps,], dtype=torch.float32).to(self.device)
+        return torch.tensor(samps).to(self.device).reshape(-1,1)
+    
+def build_uniform_dist(bounds, device):
+    return Uniform(tensor([bounds[0]], dtype = torch.float32).to(device), tensor([bounds[1]], dtype = torch.float32).to(device) )
+
+def build_truncnorm_dist(loc,scale, bounds, device):
+    
+    custom_dist = MyTruncNorm(loc,scale,bounds,device= device)
+    
+    lb = torch.tensor([bounds[0]]).to(device)
+    ub = torch.tensor([bounds[1]]).to(device)
+    
+    return CustomPriorWrapper(custom_dist, event_shape=torch.Size([1]),lower_bound = lb, upper_bound = ub)
+
+def build_mzr_dist(logMs_range, device):
+    custom_dist = MZRPrior(logMs_range, device = device)
+    lb =  torch.tensor([logMs_range[0], -2.25]).to(device)
+    ub =  torch.tensor([logMs_range[1], 0.5]).to(device)
+    return CustomPriorWrapper(custom_dist, event_shape=torch.Size([2]), lower_bound = lb, upper_bound = ub )
+
+
+def get_default_dwarf_3pop_prior(
+        D_range: Iterable,
+        logMs_range: Iterable,
+        device: Optional[str] = 'cpu'
+    )-> torch.distributions.distribution.Distribution:
+    
+    
+    D_dist = build_uniform_dist(D_range, device)
+    M_and_Z_dist = build_mzr_dist(logMs_range, device)
+    fy_dist = build_truncnorm_dist(0, 0.05, [0,0.2], device )
+    age_y_dist = build_uniform_dist([0.1,0.8], device)
+    fm_dist = build_truncnorm_dist(0.4, 0.2, [0,0.8], device )
+    age_m_dist = build_uniform_dist([1.,5.], device)
+        
+    prior = MultipleIndependent([D_dist,M_and_Z_dist,fy_dist, age_y_dist, fm_dist, age_m_dist])
+    return prior
+
+def get_default_dwarf_fixed_age_prior(
+        D_range: Iterable,
+        logMs_range: Iterable,
+        device: Optional[str] = 'cpu'
+    )-> torch.distributions.distribution.Distribution:
+    
+
+    D_dist = build_uniform_dist(D_range, device)
+    M_and_Z_dist = build_mzr_dist(logMs_range, device)
+    fy_dist = build_truncnorm_dist(0, 0.05, [0.,0.2], device )
+    ay_n_dist = build_uniform_dist([0.5,5.], device)
+
+    fm_dist = build_truncnorm_dist(0.4, 0.2, [0.,0.8], device )
+    prior = MultipleIndependent([D_dist,M_and_Z_dist,fy_dist, ay_n_dist, fm_dist])
+
+    return prior
+
+def get_default_dwarf_2pop_prior(
         D_range: Iterable,
         logMs_range: Iterable,
         device: Optional[str] = 'cpu'
@@ -15,18 +141,14 @@ def get_default_dwarf_prior(
 
     Z_range = [-2.25,0.25]
 
-    fy_range = [0.,0.2]
-    age_y_range = [0.1,0.8]
-    
-    fm_range = [0.,0.8]
-    age_m_range = [1.,10.]
-
-    unif_bounds_tensor = torch.tensor([D_range,logMs_range, Z_range,fy_range,age_y_range,fm_range,age_m_range]).to(device)
+    fy_range = [0.,0.5]
+    age_y_range = [0.1,2.]
+ 
+    unif_bounds_tensor = torch.tensor([D_range,logMs_range, Z_range,fy_range,age_y_range]).to(device)
     
     prior = BoxUniform(unif_bounds_tensor[:,0], unif_bounds_tensor[:,1], device= device)
 
     return prior
-
 
 def get_SSP_prior(
         D_range: Iterable,
@@ -68,23 +190,8 @@ class MSSP_Prior:
         self.Z_max = 0.25
         self.device = device
 
-    def MZR(self, logM): #Kirby et al. (2013) -- this is only calibrated for logM <= 8.7
+    def MZR(self, logM):
         return -1.69 + 0.3*(logM - 6.)
-
-    # def MZR(self, logM): ## COMMENTED OUT AS A SUGGESTED CHANGE
-    
-    #     if logM <= 8.7:
-    #         feh = -1.69 + 0.3*(logM - 6.) #Kirby+2013 https://ui.adsabs.harvard.edu/abs/2013ApJ...779..102K/abstract
-    #         #scatter is ~0.2 dex
-
-    #     else:
-    #         logmass_ = [8.91, 9.11, 9.31, 9.51, 9.72, 9.91, 10.11, 10.31, 10.51, 10.72, 10.91, 11.11, 11.31, 11.51, 11.72, 11.91]
-    #         feh_ = [-0.60, -0.61, -0.65, -0.61, -0.52, -0.41, -0.23, -0.11, -0.01, 0.04, 0.07, 0.1, 0.12, 0.13, 0.14, 0.15]
-    #         mzr_fit = np.polyfit(logmass_, feh_, 6)
-    #         feh = np.poly1d(mzr_fit)(logM) #Gallazzi+2005 https://ui.adsabs.harvard.edu/abs/2005MNRAS.362...41G/abstract
-    #         #scatter is ~0.3 dex
-
-    #     return feh
     
     def sample_Z_SSP(self, M_tot,sample_shape):
         Z_mean = self.MZR(M_tot)
@@ -146,7 +253,7 @@ class MSSP_Prior:
         
         return log_prob.to(self.device)
 
-def get_mssp_prior(Dlims,Mlims,logAgelims,device = 'cpu'):
+def _get_mssp_prior_old(Dlims,Mlims,logAgelims,device = 'cpu'):
     
     custom_prior = MSSP_Prior(Dlims,Mlims,logAgelims,device = device)
     
@@ -288,7 +395,7 @@ class Default_Prior:
 
         return log_prob
 
-def get_default_prior(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 0.1,f_Y_sig = 0.02,f_M_max = 0.75,f_M_mean = 0.2, f_M_sig = 0.2, device = 'cpu'):
+def _get_default_prior_old(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 0.1,f_Y_sig = 0.02,f_M_max = 0.75,f_M_mean = 0.2, f_M_sig = 0.2, device = 'cpu'):
     
     custom_prior = Default_Prior(Dlims,Mlims,MZR_expand_fac =MZR_expand_fac,f_Y_max = f_Y_max,f_Y_sig = f_Y_sig, 
      f_M_max = f_M_max,f_M_mean = f_M_mean,f_M_sig = f_M_sig, device = device)
@@ -416,7 +523,7 @@ class Default2PopPrior:
         
         return log_prob.to(self.device)
 
-def get_default_2pop_prior(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 1.,f_Y_sig = 0.2, device = 'cpu'):
+def _get_default_2pop_prior_old(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 1.,f_Y_sig = 0.2, device = 'cpu'):
     
     custom_prior = Default2PopPrior(Dlims,Mlims,MZR_expand_fac =MZR_expand_fac,f_Y_max = f_Y_max,f_Y_sig = f_Y_sig, device = device)
     
@@ -451,3 +558,141 @@ def get_default_2pop_prior(Dlims,Mlims, MZR_expand_fac = 1.,f_Y_max = 1.,f_Y_sig
         )
 
     return prior
+
+import math
+from numbers import Number
+
+import torch
+from torch.distributions import Distribution, constraints
+from torch.distributions.utils import broadcast_all
+
+CONST_SQRT_2 = math.sqrt(2)
+CONST_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
+CONST_INV_SQRT_2 = 1 / math.sqrt(2)
+CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
+CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
+
+
+class TruncatedStandardNormal(Distribution):
+    """
+    Truncated Standard Normal distribution
+    https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
+    """
+
+    arg_constraints = {
+        'a': constraints.real,
+        'b': constraints.real,
+    }
+    has_rsample = True
+
+    def __init__(self, a, b, validate_args=None):
+        self.a, self.b = broadcast_all(a, b)
+        if isinstance(a, Number) and isinstance(b, Number):
+            batch_shape = torch.Size()
+        else:
+            batch_shape = self.a.size()
+        super(TruncatedStandardNormal, self).__init__(batch_shape, validate_args=validate_args)
+        if self.a.dtype != self.b.dtype:
+            raise ValueError('Truncation bounds types are different')
+        if any((self.a >= self.b).view(-1,).tolist()):
+            raise ValueError('Incorrect truncation range')
+        eps = torch.finfo(self.a.dtype).eps
+        self._dtype_min_gt_0 = eps
+        self._dtype_max_lt_1 = 1 - eps
+        self._little_phi_a = self._little_phi(self.a)
+        self._little_phi_b = self._little_phi(self.b)
+        self._big_phi_a = self._big_phi(self.a)
+        self._big_phi_b = self._big_phi(self.b)
+        self._Z = (self._big_phi_b - self._big_phi_a).clamp_min(eps)
+        self._log_Z = self._Z.log()
+        little_phi_coeff_a = torch.nan_to_num(self.a, nan=math.nan)
+        little_phi_coeff_b = torch.nan_to_num(self.b, nan=math.nan)
+        self._lpbb_m_lpaa_d_Z = (self._little_phi_b * little_phi_coeff_b - self._little_phi_a * little_phi_coeff_a) / self._Z
+        self._mean = -(self._little_phi_b - self._little_phi_a) / self._Z
+        self._variance = 1 - self._lpbb_m_lpaa_d_Z - ((self._little_phi_b - self._little_phi_a) / self._Z) ** 2
+        self._entropy = CONST_LOG_SQRT_2PI_E + self._log_Z - 0.5 * self._lpbb_m_lpaa_d_Z
+
+    @constraints.dependent_property
+    def support(self):
+        return constraints.interval(self.a, self.b)
+
+    @property
+    def mean(self):
+        return self._mean
+
+    @property
+    def variance(self):
+        return self._variance
+
+    @property
+    def entropy(self):
+        return self._entropy
+
+    @property
+    def auc(self):
+        return self._Z
+
+    @staticmethod
+    def _little_phi(x):
+        return (-(x ** 2) * 0.5).exp() * CONST_INV_SQRT_2PI
+
+    @staticmethod
+    def _big_phi(x):
+        return 0.5 * (1 + (x * CONST_INV_SQRT_2).erf())
+
+    @staticmethod
+    def _inv_big_phi(x):
+        return CONST_SQRT_2 * (2 * x - 1).erfinv()
+
+    def cdf(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        return ((self._big_phi(value) - self._big_phi_a) / self._Z).clamp(0, 1)
+
+    def icdf(self, value):
+        return self._inv_big_phi(self._big_phi_a + value * self._Z)
+
+    def log_prob(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        return CONST_LOG_INV_SQRT_2PI - self._log_Z - (value ** 2) * 0.5
+
+    def rsample(self, sample_shape=torch.Size()):
+        shape = self._extended_shape(sample_shape)
+        p = torch.empty(shape, device=self.a.device).uniform_(self._dtype_min_gt_0, self._dtype_max_lt_1)
+        return self.icdf(p)
+
+### Taken from https://github.com/toshas/torch_truncnorm/blob/main/TruncatedNormal.py
+### Tried to Install from github but it didn't work, not sure how to give propr credit
+class TruncatedNormal(TruncatedStandardNormal):
+    """
+    Truncated Normal distribution
+    https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
+    """
+
+    has_rsample = True
+
+    def __init__(self, loc, scale, a, b, validate_args=None):
+        self.loc, self.scale, a, b = broadcast_all(loc, scale, a, b)
+        a = (a - self.loc) / self.scale
+        b = (b - self.loc) / self.scale
+        super(TruncatedNormal, self).__init__(a, b, validate_args=validate_args)
+        self._log_scale = self.scale.log()
+        self._mean = self._mean * self.scale + self.loc
+        self._variance = self._variance * self.scale ** 2
+        self._entropy += self._log_scale
+
+    def _to_std_rv(self, value):
+        return (value - self.loc) / self.scale
+
+    def _from_std_rv(self, value):
+        return value * self.scale + self.loc
+
+    def cdf(self, value):
+        return super(TruncatedNormal, self).cdf(self._to_std_rv(value))
+
+    def icdf(self, value):
+        return self._from_std_rv(super(TruncatedNormal, self).icdf(value))
+
+    def log_prob(self, value):
+        return super(TruncatedNormal, self).log_prob(self._to_std_rv(value)) - self._log_scale

@@ -1,5 +1,3 @@
-## Main code taking from torchvision: https://github.com/pytorch/vision/blob/main/torchvision/models/densenet.py
-### modified slightly to allow for different number of filters for input image numbers
 from collections import OrderedDict
 from functools import partial
 from typing import Any, List, Optional, Tuple, Union
