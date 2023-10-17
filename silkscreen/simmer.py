@@ -154,7 +154,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
                                             ser_param['n'],
                                             ser_param['theta'],
                                             ser_param['ellip'], 
-                                            self.obs_object.im_dims,
+                                            self.obs_object.im_dim,
                                             self.obs_object.pixel_scale,
                                             num_r_eff=10,
                                             dx=ser_param['dx'],
@@ -166,13 +166,25 @@ class ArtpopSimmer(ArtpopIsoLoader):
             plummer_param['scale_radius_kpc'] = plummer_param['scale_radius_as']*np.pi/(180*3600) * sp_use.distance.to(u.kpc).value
             source_cur = artpop.source.PlummerSP(sp_use,
                                             plummer_param['scale_radius_kpc'],
-                                            self.obs_object.im_dims,
+                                            self.obs_object.im_dim,
                                             self.obs_object.pixel_scale,
                                             dx=plummer_param['dx'],
                                             dy=plummer_param['dy'],
                                             labels=None)
         return source_cur
+    
+    def get_artpop_obs(self, src, filt_ind):
+        
+        filt_cur = self.obs_object.filters[filt_ind]
+        ## Check to get the right properties
+        cur_exp_time = self.obs_object.exp_time[filt_ind] if isinstance(self.obs_object.exp_time,Iterable) else self.obs_object.exp_time
+        cur_sky_sb =  self.obs_object.sky_sb[filt_ind] if isinstance(self.obs_object.sky_sb,Iterable) else self.obs_object.sky_sb
+        cur_psf = self.obs_object.psf[filt_ind] if self.obs_object.psf.ndim>2 else self.obs_object.psf
+        cur_zpt = self.obs_object.zpt[filt_ind] if isinstance(self.obs_object.zpt,Iterable) else self.obs_object.zpt
 
+        im_cur = self.obs_object.imager.observe(src,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = cur_sky_sb, zpt = cur_zpt)
+        return im_cur
+    
     def get_image(self,
                     x: torch.Tensor,
                     num_shuffle: Optional[int] = 1,
@@ -188,13 +200,8 @@ class ArtpopSimmer(ArtpopIsoLoader):
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
             for j,filt_cur in enumerate(self.obs_object.filters):
-
-                cur_exp_time = self.obs_object.exp_time[j] if isinstance(self.obs_object.exp_time,Iterable) else self.obs_object.exp_time
-                cur_sky_sb =  self.obs_object.sky_sb[j] if isinstance(self.obs_object.sky_sb,Iterable) else self.obs_object.sky_sb
-                cur_psf = self.obs_object.psf[j] if self.obs_object.psf.ndim>2 else self.obs_object.psf
-                cur_zpt = self.obs_object.zpt[j] if isinstance(self.obs_object.zpt,Iterable) else self.obs_object.zpt
-
-                im_cur = self.obs_object.imager.observe(src_cur,filt_cur, cur_exp_time*u.second, psf = cur_psf, sky_sb = cur_sky_sb, zpt = cur_zpt)
+                
+                im_cur = self.get_artpop_obs(src_cur, j)
                 cur_shuf_list.append(im_cur.image)
 
             img_list.append(cur_shuf_list)
@@ -214,8 +221,6 @@ class ArtpopSimmer(ArtpopIsoLoader):
         # But for most of our setups this shouldn't be the case although important to check
         # Could maybe add a option to use Poisson noise if neeeded
 
-        imager = artpop.IdealImager()
-
         src_cur = self.build_source(x)
 
         xy_to_shuffle = src_cur.xy.copy()
@@ -226,12 +231,13 @@ class ArtpopSimmer(ArtpopIsoLoader):
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
             for j,filt_cur in enumerate(self.obs_object.filters):
-
-                cur_psf = self.obs_object.psf[j] if self.obs_object.psf.ndim>2 else self.obs_object.psf
-                cur_zpt = self.obs_object.zpt[j] if isinstance(self.obs_object.zpt,Iterable) else self.obs_object.zpt
-
-                im_cur = imager.observe(src_cur,filt_cur, psf = cur_psf,zpt = cur_zpt)
-                cur_shuf_list.append(im_cur.image)
+                
+                im_cur = self.get_artpop_obs(src_cur, j)
+                counts_to_use = im_cur.src_counts
+                counts_to_use[counts_to_use <1e-8] = 1e-8 #Make sure no below zero, happens sometimes with bright stars if PSF is noisy
+                
+                im_w_src_p_noise = np.random.normal(loc = counts_to_use, scale = np.sqrt( counts_to_use) )*im_cur.calibration
+                cur_shuf_list.append(im_w_src_p_noise)
 
             img_list.append(cur_shuf_list)
         
@@ -257,8 +263,8 @@ class SSPSimmer(ArtpopSimmer):
         return self.build_ssp(logMs, D, Z, logAge)
 
 
-class DefaultDwarfSimmer(ArtpopSimmer):
-    "Class to simulate the default dwarf model with 3 components , two of which have fixed ages with shared metallicity"
+class DefaultDwarfThreePopSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 3 components, with shared metallicity"
     def __init__(self,obs_object: SilkScreenObservation):
         super().__init__(obs_object)
 
@@ -268,7 +274,7 @@ class DefaultDwarfSimmer(ArtpopSimmer):
     def build_sp(self, x):
         D,logM, Z, f_y, age_y, f_m, age_m = x.tolist()
         
-        # Fixed ages for the young and old component
+        # Fixed ages for the old component
         logAge_o = 10.08
         logAge_m = np.log10(age_m) + 9.
         logAge_y = np.log10(age_y) + 9.
@@ -279,4 +285,50 @@ class DefaultDwarfSimmer(ArtpopSimmer):
         ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
         ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
         sp_comb = ssp_y + ssp_m + ssp_o
+        return sp_comb
+
+class DefaultDwarfFixedAgeSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 3 components with fixed ages, with shared metallicity"
+    def __init__(self,obs_object: SilkScreenObservation):
+        super().__init__(obs_object)
+
+        self.N_free = 6
+        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','age_y (/100 Myr)', 'F_m', ]
+
+    def build_sp(self, x):
+        D,logM, Z, f_y, age_y_norm, f_m = x.tolist()
+        
+        # Fixed ages for the old and medium components component
+        logAge_m = np.log10(age_y_norm) + 8.
+        logAge_y = np.log10(2.) + 9.
+        logAge_o = np.log10(12.5) + 9.
+
+        f_o = 1. - f_m - f_y
+
+        ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
+        ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
+        ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
+        sp_comb = ssp_y + ssp_m + ssp_o
+        return sp_comb
+    
+class DefaultDwarfTwoPopSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 2 components with shared metallicity"
+    def __init__(self,obs_object: SilkScreenObservation):
+        super().__init__(obs_object)
+
+        self.N_free = 5
+        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)']
+
+    def build_sp(self, x):
+        D,logM, Z, f_y, age_y = x.tolist()
+        
+        # Fixed ages for the old component
+        logAge_o = 10.08 # 12 gyr
+        logAge_y = np.log10(age_y) + 9.
+
+        f_o = 1. - f_y
+
+        ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
+        ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
+        sp_comb = ssp_y + ssp_o
         return sp_comb
