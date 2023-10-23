@@ -1,4 +1,3 @@
-from .neural_nets import DenseNet
 
 import torch
 from tqdm.auto import tqdm
