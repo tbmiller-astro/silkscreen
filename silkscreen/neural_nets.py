@@ -235,7 +235,7 @@ class SilkScreenCNN(nn.Module):
 
 
 def build_default_NN(
-        shape,
+        num_filter: int,
         num_summary: Optional[int] = 64):
     """_summary_
 
@@ -244,9 +244,7 @@ def build_default_NN(
     num_filters : int
         Number of filters
     """
-    im_shape = shape[1:]
-    num_channels = shape[0]
-    embedding_net = silkscreen_resnet(num_summary=num_summary, num_filter=num_channels)
+    embedding_net = silkscreen_resnet(num_summary=num_summary, num_filter=num_filter)
     flow_kwargs = {'z_score_theta':'independent', 'z_score_x':'structured', 'hidden_features': 50, 'num_transforms':5, 'dropout_probability':0.0, 'num_blocks':2,'hidden_layers_spline_context':2., 'num_bins':6}
     
     posterior_nn = sbi_utils.posterior_nn('maf', embedding_net=embedding_net, **flow_kwargs )
