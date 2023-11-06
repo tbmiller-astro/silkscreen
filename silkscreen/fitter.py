@@ -30,7 +30,8 @@ def fit_silkscreen_model(
     lr_flow = 1e-4,
     lr_cnn = 1e-4,
     lr_mod = 0.1,
-    norm_func: Optional[Callable] =  lambda x: x
+    norm_func: Optional[Callable] =  lambda x: x,
+    n_jobs = 1,
     )-> NeuralInference:
     """Function used to train SilkScreen Model
 
@@ -64,7 +65,8 @@ def fit_silkscreen_model(
         Whether or not to save simulated data, by default False
     save_posterior : Optional[bool], optional
         whether or not to pickle posterior, by default False
-
+    n_jobs : Optional[int]
+        number of mpire jobs to use
     Returns
     -------
     NeuralInference
@@ -125,10 +127,23 @@ def fit_silkscreen_model(
         if pre_simulated_file is not None and r == 0:
             theta_cur,x_cur = parse_torch_sim_file(pre_simulated_file)
         else:
-            theta_cur,x_cur = run_sims(sim_func, proposal, num_r, samp_kwargs = sampling_kwargs )
+            theta_cur,x_cur = run_sims(sim_func, proposal, num_r, n_jobs = n_jobs, samp_kwargs = sampling_kwargs )
             
         append_sims_kwargs = {'proposal':proposal, 'data_device':data_device}
-        inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
+        
+        max_append = 10_000 # For memory reasons, only append 10_000 at a time
+        num_r_append = int(num_r/max_append)
+
+        if num_r_append == 0:
+            inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
+
+        else:
+            for r_append in range(num_r_append):
+                min_ind = r_append*max_append
+                max_ind = (r_append+1)*max_append
+                inference.append_simulations(theta_cur[min_ind:max_ind],x_cur[min_ind:max_ind],**append_sims_kwargs)
+            inference.append_simulations(theta_cur[max_ind:],x_cur[max_ind:],**append_sims_kwargs)
+
         
         if save_sims and not (pre_simulated_file is not None and r == 0):
             torch.save([theta_cur,x_cur],f'{save_dir}sims_round_{r}.pt')

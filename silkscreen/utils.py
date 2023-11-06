@@ -8,6 +8,7 @@ from sbi.utils import process_prior
 from typing import Iterable, Optional
 import gc
 from astropy.io import fits
+import mpire
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,13 +16,13 @@ import artpop
 import astropy.units as u
 import numpy as np
 
-default_sersic_dict = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
+default_sersic_dict = {'n':0.7, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
 
-def run_sims(sim_func, proposal, num, samp_kwargs = {}) -> torch.Tensor:
+def run_sims(sim_func, proposal, num, n_jobs = 1, samp_kwargs = {}) -> torch.Tensor:
     theta = proposal.sample((num,), **samp_kwargs).to('cpu')# Always need on cpu
-    x = []
-    for theta_cur in theta:
-        x.append(sim_func(theta_cur))
+    to_mpire = lambda *x: sim_func(torch.stack(x))
+    with mpire.WorkerPool(n_jobs=n_jobs) as pool:
+        x = pool.map(to_mpire, theta, progress_bar = True)
     x = torch.stack(x)
     return theta,x
 
