@@ -142,7 +142,8 @@ def fit_silkscreen_model(
                 min_ind = r_append*max_append
                 max_ind = (r_append+1)*max_append
                 inference.append_simulations(theta_cur[min_ind:max_ind],x_cur[min_ind:max_ind],**append_sims_kwargs)
-            inference.append_simulations(theta_cur[max_ind:],x_cur[max_ind:],**append_sims_kwargs)
+            if num_r%max_append != 0:
+                inference.append_simulations(theta_cur[max_ind:],x_cur[max_ind:],**append_sims_kwargs)
 
         
         if save_sims and not (pre_simulated_file is not None and r == 0):
