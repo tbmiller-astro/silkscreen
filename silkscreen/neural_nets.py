@@ -245,9 +245,9 @@ def build_default_NN(
         Number of filters
     """
     embedding_net = silkscreen_resnet(num_summary=num_summary, num_filter=num_filter)
-    flow_kwargs = {'z_score_theta':'independent', 'z_score_x':'structured', 'hidden_features': 50, 'num_transforms':5, 'dropout_probability':0.0, 'num_blocks':2,'hidden_layers_spline_context':2., 'num_bins':6}
+    flow_kwargs = {'z_score_theta':'independent', 'z_score_x':'structured', 'hidden_features': 50, 'num_transforms':5, 'num_bins':8}
     
-    posterior_nn = sbi_utils.posterior_nn('maf', embedding_net=embedding_net, **flow_kwargs )
+    posterior_nn = sbi_utils.posterior_nn('nsf', embedding_net=embedding_net, **flow_kwargs )
     return posterior_nn
 
 ### Maybe get rid of all this stuff:
@@ -264,7 +264,7 @@ class silkscreen_resnet(resnet.ResNet):
         self.block = resnet.BasicBlock
         self.dilation = 1
         replace_stride_with_dilation = [False, False, False]
-        layers = [1,1,1,1]
+        layers = [2,2,2,2]
         self.groups = 1
         self.base_width = 64
         self.inplanes = 32
@@ -275,10 +275,10 @@ class silkscreen_resnet(resnet.ResNet):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(self.block, 32, layers[0])
         self.layer2 = self._make_layer(self.block, 64, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(self.block, 64, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(self.block, 128, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
+        self.layer3 = self._make_layer(self.block, 128, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(self.block, 256, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(128 * self.block.expansion, num_summary)
+        self.fc = nn.Linear(256 * self.block.expansion, num_summary)
 
 
         for m in self.modules():
