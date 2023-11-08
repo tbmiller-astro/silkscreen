@@ -143,8 +143,8 @@ def fit_silkscreen_model(
                 min_ind = r_append*max_append
                 max_ind = (r_append+1)*max_append
                 inference.append_simulations(theta_cur[min_ind:max_ind],x_cur[min_ind:max_ind],**append_sims_kwargs)
-                if r == 0:
-                    _ = inference.train(max_num_epochs = -1,**default_train_kwargs) # Run to initialize optimizer
+                if r_append == 0:
+                    _ = inference.train(max_num_epochs = -1, force_first_round_loss= True,**default_train_kwargs) # Run to initialize optimizer
 
             if num_r%max_append != 0:
                 inference.append_simulations(theta_cur[max_ind:],x_cur[max_ind:],**append_sims_kwargs)
