@@ -136,12 +136,16 @@ def fit_silkscreen_model(
 
         if num_r_append == 0:
             inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
+            _ = inference.train(max_num_epochs = -1,**default_train_kwargs) # Run to initialize optimizer
 
         else:
             for r_append in range(num_r_append):
                 min_ind = r_append*max_append
                 max_ind = (r_append+1)*max_append
                 inference.append_simulations(theta_cur[min_ind:max_ind],x_cur[min_ind:max_ind],**append_sims_kwargs)
+                if r == 0:
+                    _ = inference.train(max_num_epochs = -1,**default_train_kwargs) # Run to initialize optimizer
+
             if num_r%max_append != 0:
                 inference.append_simulations(theta_cur[max_ind:],x_cur[max_ind:],**append_sims_kwargs)
 
@@ -154,16 +158,16 @@ def fit_silkscreen_model(
         
         w_decay_cnn = 1e-4
         w_decay_flow = 1e-4
-        if r == 0:
-            #Trick sbi using 'force_first_round_loss'
-            _ = inference.train(max_num_epochs = -1,**default_train_kwargs) # Run to initialize optimizer
+        #Trick sbi using 'force_first_round_loss'
 
-            inference.optimizer = optim.Adam([{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow, 'weight_decay':w_decay_flow},
-               {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn, 'weight_decay':w_decay_cnn}], lr=1e-4)        
+        optim_params = [{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow, 'weight_decay':w_decay_flow},
+                        {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn, 'weight_decay':w_decay_cnn}]
+        
+        inference.optimizer = optim.Adam(optim_params, lr=1e-4)        
+        
+        if r == 0:
             density_estimator = inference.train(force_first_round_loss=True, resume_training= True, **default_train_kwargs)
         else:
-            inference.optimizer = optim.Adam([{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow*lr_mod, 'weight_decay':w_decay_flow},
-               {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn*lr_mod, 'weight_decay':w_decay_cnn}], lr=1e-4)        
             density_estimator = inference.train(force_first_round_loss=True,**default_train_kwargs)
             
         posterior = inference.build_posterior(density_estimator)
