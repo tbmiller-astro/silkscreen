@@ -77,7 +77,7 @@ def fit_silkscreen_model(
     
     inference =  SNPE(prior = prior, density_estimator = nde, device = device)
     
-    default_train_kwargs = {'training_batch_size':64,'clip_max_norm': 7,'learning_rate':1e-4, 'validation_fraction':0.1,'stop_after_epochs': 10} #Default training hyperparameters
+    default_train_kwargs = {'training_batch_size':150,'clip_max_norm': 7,'learning_rate':1e-4, 'validation_fraction':0.1,'stop_after_epochs': 20} #Default training hyperparameters
     default_train_kwargs.update(train_kwargs)
 
     data_as_tensor = torch.Tensor(observation.data)
@@ -111,7 +111,7 @@ def fit_silkscreen_model(
                 samples.append( posterior.sample((32,),show_progress_bars = False, ) )
                 log_prob.append(  posterior.log_prob(samples[-1]) )
             log_probs = torch.stack(log_prob).flatten()
-            log_prob_threshold = log_probs.sort()[0][int(log_probs.shape[0]*1e-3)]
+            log_prob_threshold = log_probs.sort()[0][int(log_probs.shape[0]*5e-4)]
             
             def accept_reject_fn(theta):
                 theta_log_probs = posterior.log_prob(theta)
@@ -143,7 +143,7 @@ def fit_silkscreen_model(
                 min_ind = r_append*max_append
                 max_ind = (r_append+1)*max_append
                 inference.append_simulations(theta_cur[min_ind:max_ind],x_cur[min_ind:max_ind],**append_sims_kwargs)
-                if r_append == 0:
+                if r_append == 0 and r == 0:
                     _ = inference.train(max_num_epochs = -1, force_first_round_loss= True,**default_train_kwargs) # Run to initialize optimizer
 
             if num_r%max_append != 0:
@@ -156,19 +156,23 @@ def fit_silkscreen_model(
         del theta_cur,x_cur
         
         
-        w_decay_cnn = 1e-4
-        w_decay_flow = 1e-4
+        w_decay_cnn = 1e-5
+        w_decay_flow = 1e-5
         #Trick sbi using 'force_first_round_loss'
-
-        optim_params = [{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow, 'weight_decay':w_decay_flow},
-                        {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn, 'weight_decay':w_decay_cnn}]
         
-        inference.optimizer = optim.Adam(optim_params, lr=1e-4)        
+        if r==0:
+            optim_params = [{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow, 'weight_decay':w_decay_flow},
+                            {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn, 'weight_decay':w_decay_cnn}]
+        else:
+            optim_params = [{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow*lr_mod, 'weight_decay':w_decay_flow},
+                            {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn*lr_mod, 'weight_decay':w_decay_cnn}]
+        
+        inference.optimizer = optim.AdamW(optim_params, lr=1e-4)        
         
         if r == 0:
             density_estimator = inference.train(force_first_round_loss=True, resume_training= True, **default_train_kwargs)
         else:
-            density_estimator = inference.train(force_first_round_loss=True,**default_train_kwargs)
+            density_estimator = inference.train(force_first_round_loss=True,discard_prior_samples = True, **default_train_kwargs)
             
         posterior = inference.build_posterior(density_estimator)
         

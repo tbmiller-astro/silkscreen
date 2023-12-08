@@ -245,7 +245,7 @@ def build_default_NN(
         Number of filters
     """
     embedding_net = silkscreen_resnet(num_summary=num_summary, num_filter=num_filter)
-    flow_kwargs = {'z_score_theta':'independent', 'z_score_x':'structured', 'hidden_features': 50, 'num_transforms':5, 'num_bins':8}
+    flow_kwargs = {'z_score_theta':'independent', 'z_score_x':'structured', 'hidden_features': 50, 'num_transforms':5, 'num_bins':8, 'dropout':0.2}
     
     posterior_nn = sbi_utils.posterior_nn('nsf', embedding_net=embedding_net, **flow_kwargs )
     return posterior_nn
@@ -261,24 +261,24 @@ class silkscreen_resnet(resnet.ResNet):
         norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
 
-        self.block = resnet.BasicBlock
+        self.block = resnet.Bottleneck
         self.dilation = 1
         replace_stride_with_dilation = [False, False, False]
         layers = [2,2,2,2]
         self.groups = 1
-        self.base_width = 64
-        self.inplanes = 32
+        self.base_width = 32
+        self.inplanes = 16
 
         self.conv1 = nn.Conv2d(num_filter, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(self.block, 32, layers[0])
-        self.layer2 = self._make_layer(self.block, 64, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(self.block, 128, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(self.block, 256, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
+        self.layer1 = self._make_layer(self.block, 16, layers[0])
+        self.layer2 = self._make_layer(self.block, 32, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
+        self.layer3 = self._make_layer(self.block, 64, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(self.block, 128, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(256 * self.block.expansion, num_summary)
+        self.fc = nn.Linear(128*self.block.expansion, num_summary)
 
 
         for m in self.modules():
