@@ -1,4 +1,3 @@
-from .neural_nets import DenseNet
 
 import torch
 from tqdm.auto import tqdm
@@ -9,6 +8,7 @@ from sbi.utils import process_prior
 from typing import Iterable, Optional
 import gc
 from astropy.io import fits
+import mpire
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,13 +16,13 @@ import artpop
 import astropy.units as u
 import numpy as np
 
-default_sersic_dict = {'n':0.5, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
+default_sersic_dict = {'n':0.7, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':0}
 
-def run_sims(sim_func, proposal, num) -> torch.Tensor:
-    theta = proposal.sample((num,)).to('cpu')# Always need on cpu
-    x = []
-    for theta_cur in tqdm(theta):
-        x.append(sim_func(theta_cur))
+def run_sims(sim_func, proposal, num, n_jobs = 1, samp_kwargs = {}) -> torch.Tensor:
+    theta = proposal.sample((num,), **samp_kwargs).to('cpu')# Always need on cpu
+    to_mpire = lambda *x: sim_func(torch.stack(x))
+    with mpire.WorkerPool(n_jobs=n_jobs) as pool:
+        x = pool.map(to_mpire, theta, progress_bar = True)
     x = torch.stack(x)
     return theta,x
 
@@ -32,9 +32,16 @@ def parse_input_file(location, output = 'torch'):
     if suffix == 'pt':
         obs_data = torch.load(location)
     elif suffix == 'npy':
-        obs_data = torch.from_numpy( np.load(location))
+        arr =  np.load(location)
+        
+        if arr.dtype.byteorder == '>': # Ensure correct byte order to transfer to torch
+            arr = arr.byteswap().newbyteorder('<')
+        obs_data = torch.from_numpy(arr)
     elif suffix == 'fits':
-        obs_data = torch.from_numpy(fits.getdata(location) )
+        data = fits.getdata(location)
+        if data.dtype.byteorder == '>':
+            data = data.byteswap().newbyteorder('<')
+        obs_data = torch.from_numpy(data )
     else:
         return 0
 
@@ -139,27 +146,3 @@ def get_reddening(coords,filts):
     
     return extinction.apply(extinction.calzetti00(lam_eff, 3.1*ebv, 3.1), flux)
 
-def build_default_NN(
-        img_size: Iterable,
-        num_filters: int,
-        n_summary: Optional[int] = 16,
-):
-    """_summary_
-
-    Parameters
-    ----------
-    img_size : Iterable
-        Size of image(s)
-    num_filters : int
-        Number of filters
-    n_summary : Optional[int], optional
-        Number of summary statistic output by CNN. A hyperparameter that can be tuned, by default 16. In our experience does not usually greatly affect results.
-    """
-
-    embedding_net = DenseNet(num_filters = num_filters, num_classes = n_summary, block_config=[3,3,6,4], num_init_features=16, growth_rate=16, norm_asinh=False)#Can change
-
-    flow_kwargs = {'z_score_theta':'independent', 'z_score_x':'structured', 'hidden_features': 50,
-        'num_transforms':5, 'num_bins': 10}
-    
-    posterior_nn = sbi_utils.posterior_nn('nsf', embedding_net= embedding_net, **flow_kwargs )
-    return posterior_nn
