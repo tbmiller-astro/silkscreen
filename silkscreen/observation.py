@@ -27,7 +27,7 @@ class SilkScreenObservation(object):
     sky_sb: float, optional (default: 21)
         sky surface brightness to use, in mag/arcsec^2
     psf: artpop psf object, optional (default: None)
-        PSF to use. If none provided, a Moffat psf with a 0.7 arcsecond FWHM is used.
+        PSF to use, if using multiple bands, the length of the first axis must be equal to the number of bands
     iso_kwargs: dict, optional (default :None)
         Additional keyword arguments to pass to ArtpopIsoLoader   
     '''
@@ -73,6 +73,11 @@ class SilkScreenObservation(object):
         self.sky_sb = sky_sb
         self.zpt = zpt
         self.psf = psf
+        if self.num_filt == 1:
+            assert len(self.psf.shape) == 2, "For a single band PSF must be 2 dimensional"
+        else:
+            assert len(self.psf.shape) == 3 and self.psf.shape[0] == self.num_filt, "For multiple bands, the PSF array must be 3 dimensional with the first axis representing each bandß"
+        
         self.iso_kwargs = iso_kwargs
         self.extinction_reddening = extinction_reddening
         

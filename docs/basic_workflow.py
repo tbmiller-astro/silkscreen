@@ -5,7 +5,7 @@ from silkscreen import simmer
 from silkscreen.fitter import SilkScreenFitter
 from sbi.utils.get_nn_models import posterior_nn
 
-#How to build SilkScreen Simmer from scratch
+# Need to re-do this but shouldn't be too hard
 
 #Load data
 x_obs = torch.load('SOME/PATH/TO/data.pt')
