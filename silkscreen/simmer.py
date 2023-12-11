@@ -295,7 +295,7 @@ class DefaultDwarfThreePopSimmer(ArtpopSimmer):
         super().__init__(obs_object)
 
         self.N_free = 7
-        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)', 'F_m','Age_M (Gyr)', ]
+        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)', 'F_m','Age_M (Gyr)']#, ] (TYPO??)
 
     def build_sp(self, x):
         D,logM, Z, f_y, age_y, f_m, age_m = x.tolist()

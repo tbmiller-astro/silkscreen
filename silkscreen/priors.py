@@ -19,6 +19,21 @@ class MZRPrior():
         self.MZR_sig = 0.17*frac_expand
         self.Z_bounds = [-2.25,0.5]
         self.device = device
+
+    # def MZR(self, logM): ## COMMENTED OUT AS A SUGGESTED CHANGE
+    
+    #     if logM <= 8.7:
+    #         feh = -1.69 + 0.3*(logM - 6.) #Kirby+2013 https://ui.adsabs.harvard.edu/abs/2013ApJ...779..102K/abstract
+    #         #scatter is ~0.2 dex
+
+    #     else:
+    #         logmass_ = [8.91, 9.11, 9.31, 9.51, 9.72, 9.91, 10.11, 10.31, 10.51, 10.72, 10.91, 11.11, 11.31, 11.51, 11.72, 11.91]
+    #         feh_ = [-0.60, -0.61, -0.65, -0.61, -0.52, -0.41, -0.23, -0.11, -0.01, 0.04, 0.07, 0.1, 0.12, 0.13, 0.14, 0.15]
+    #         mzr_fit = np.polyfit(logmass_, feh_, 6)
+    #         feh = np.poly1d(mzr_fit)(logM) #Gallazzi+2005 https://ui.adsabs.harvard.edu/abs/2005MNRAS.362...41G/abstract
+    #         #scatter is ~0.3 dex
+
+    #     return feh
         
     @staticmethod
     def KirbyMZR(logM):
