@@ -209,7 +209,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
         if self.obs_object.extinction_reddening is not None:
             img_list *= self.obs_object.extinction_reddening[:,None,None]
         
-        if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
+        if output == 'torch': img_list = torch.from_numpy(img_list.astype(np.float32)).type(torch.float)
         return img_list
 
     def get_image_for_injec(self,
@@ -244,7 +244,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
         if self.obs_object.extinction_reddening is not None:
             img_list *= self.obs_object.extinction_reddening[:,None,None]
         img_list = np.asarray(img_list).squeeze()
-        if output == 'torch': img_list = torch.from_numpy(img_list).type(torch.float)
+        if output == 'torch': img_list = torch.from_numpy(img_list.astype(np.float32)).type(torch.float)
         return img_list
 
 ## Both types of simmers used in the original silkscreen paper
@@ -275,8 +275,8 @@ class DefaultDwarfFixedAgeSimmer(ArtpopSimmer):
         D,logM, Z, f_y, age_y_norm, f_m = x.tolist()
         
         # Fixed ages for the old and medium components component
-        logAge_m = np.log10(age_y_norm) + 8.
-        logAge_y = np.log10(2.) + 9.
+        logAge_y = np.log10(age_y_norm) + 8.
+        logAge_m = np.log10(2.) + 9.
         logAge_o = np.log10(12.5) + 9.
 
         f_o = 1. - f_m - f_y
