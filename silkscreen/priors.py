@@ -676,4 +676,4 @@ class TruncatedNormal(TruncatedStandardNormal):
         return self._from_std_rv(super(TruncatedNormal, self).icdf(value))
 
     def log_prob(self, value):
-        return super(TruncatedNormal, self).log_prob(self._to_std_rv(value)) - self._log_scale\
+        return super(TruncatedNormal, self).log_prob(self._to_std_rv(value)) - self._log_scale
