@@ -247,7 +247,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
         if output == 'torch': img_list = torch.from_numpy(img_list.astype(np.float32)).type(torch.float)
         return img_list
 
-
+## Both types of simmers used in the original silkscreen paper
 class SSPSimmer(ArtpopSimmer):
     "Class to simulate simple ssp"
     def __init__(self,obs_object: SilkScreenObservation):
@@ -262,30 +262,6 @@ class SSPSimmer(ArtpopSimmer):
         logAge = np.log10(Age) + 9.
         return self.build_ssp(logMs, D, Z, logAge)
 
-
-class DefaultDwarfThreePopSimmer(ArtpopSimmer):
-    "Class to simulate the default dwarf model with 3 components, with shared metallicity"
-    def __init__(self,obs_object: SilkScreenObservation):
-        super().__init__(obs_object)
-
-        self.N_free = 7
-        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)', 'F_m','Age_M (Gyr)', ]
-
-    def build_sp(self, x):
-        D,logM, Z, f_y, age_y, f_m, age_m = x.tolist()
-        
-        # Fixed ages for the old component
-        logAge_o = 10.08
-        logAge_m = np.log10(age_m) + 9.
-        logAge_y = np.log10(age_y) + 9.
-
-        f_o = 1. - f_m - f_y
-
-        ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
-        ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
-        ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
-        sp_comb = ssp_y + ssp_m + ssp_o
-        return sp_comb
 
 class DefaultDwarfFixedAgeSimmer(ArtpopSimmer):
     "Class to simulate the default dwarf model with 3 components with fixed ages, with shared metallicity"
@@ -310,7 +286,33 @@ class DefaultDwarfFixedAgeSimmer(ArtpopSimmer):
         ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
         sp_comb = ssp_y + ssp_m + ssp_o
         return sp_comb
-    
+
+
+### Other options not used in the paper but allow some more freedom.
+class DefaultDwarfThreePopSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 3 components, with shared metallicity"
+    def __init__(self,obs_object: SilkScreenObservation):
+        super().__init__(obs_object)
+
+        self.N_free = 7
+        self.param_descrip = ['D (Mpc)', 'logMs','Z','F_y','Age_Y (Gyr)', 'F_m','Age_M (Gyr)']#, ] (TYPO??)
+
+    def build_sp(self, x):
+        D,logM, Z, f_y, age_y, f_m, age_m = x.tolist()
+        
+        # Fixed ages for the old component
+        logAge_o = 10.08
+        logAge_m = np.log10(age_m) + 9.
+        logAge_y = np.log10(age_y) + 9.
+
+        f_o = 1. - f_m - f_y
+
+        ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
+        ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
+        ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
+        sp_comb = ssp_y + ssp_m + ssp_o
+        return sp_comb
+
 class DefaultDwarfTwoPopSimmer(ArtpopSimmer):
     "Class to simulate the default dwarf model with 2 components with shared metallicity"
     def __init__(self,obs_object: SilkScreenObservation):

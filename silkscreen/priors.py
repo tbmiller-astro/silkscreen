@@ -19,6 +19,21 @@ class MZRPrior():
         self.MZR_sig = 0.17*frac_expand
         self.Z_bounds = [-2.25,0.5]
         self.device = device
+
+    # def MZR(self, logM): ## COMMENTED OUT AS A SUGGESTED CHANGE
+    
+    #     if logM <= 8.7:
+    #         feh = -1.69 + 0.3*(logM - 6.) #Kirby+2013 https://ui.adsabs.harvard.edu/abs/2013ApJ...779..102K/abstract
+    #         #scatter is ~0.2 dex
+
+    #     else:
+    #         logmass_ = [8.91, 9.11, 9.31, 9.51, 9.72, 9.91, 10.11, 10.31, 10.51, 10.72, 10.91, 11.11, 11.31, 11.51, 11.72, 11.91]
+    #         feh_ = [-0.60, -0.61, -0.65, -0.61, -0.52, -0.41, -0.23, -0.11, -0.01, 0.04, 0.07, 0.1, 0.12, 0.13, 0.14, 0.15]
+    #         mzr_fit = np.polyfit(logmass_, feh_, 6)
+    #         feh = np.poly1d(mzr_fit)(logM) #Gallazzi+2005 https://ui.adsabs.harvard.edu/abs/2005MNRAS.362...41G/abstract
+    #         #scatter is ~0.3 dex
+
+    #     return feh
         
     @staticmethod
     def KirbyMZR(logM):
@@ -98,22 +113,6 @@ def build_mzr_dist(logMs_range, device):
     return CustomPriorWrapper(custom_dist, event_shape=torch.Size([2]), lower_bound = lb, upper_bound = ub )
 
 
-def get_default_dwarf_3pop_prior(
-        D_range: Iterable,
-        logMs_range: Iterable,
-        device: Optional[str] = 'cpu'
-    )-> torch.distributions.distribution.Distribution:
-    
-    
-    D_dist = build_uniform_dist(D_range, device)
-    M_and_Z_dist = build_mzr_dist(logMs_range, device)
-    fy_dist = build_truncnorm_dist(0, 0.05, [0,0.2], device )
-    age_y_dist = build_uniform_dist([0.1,0.8], device)
-    fm_dist = build_truncnorm_dist(0.4, 0.2, [0,0.8], device )
-    age_m_dist = build_uniform_dist([1.,5.], device)
-        
-    prior = MultipleIndependent([D_dist,M_and_Z_dist,fy_dist, age_y_dist, fm_dist, age_m_dist])
-    return prior
 
 def get_default_dwarf_fixed_age_prior(
         D_range: Iterable,
@@ -129,24 +128,6 @@ def get_default_dwarf_fixed_age_prior(
 
     fm_dist = build_truncnorm_dist(0.4, 0.2, [0.,0.8], device )
     prior = MultipleIndependent([D_dist,M_and_Z_dist,fy_dist, ay_n_dist, fm_dist])
-
-    return prior
-
-def get_default_dwarf_2pop_prior(
-        D_range: Iterable,
-        logMs_range: Iterable,
-        device: Optional[str] = 'cpu'
-    )-> torch.distributions.distribution.Distribution:
-    
-
-    Z_range = [-2.25,0.25]
-
-    fy_range = [0.,0.5]
-    age_y_range = [0.1,2.]
- 
-    unif_bounds_tensor = torch.tensor([D_range,logMs_range, Z_range,fy_range,age_y_range]).to(device)
-    
-    prior = BoxUniform(unif_bounds_tensor[:,0], unif_bounds_tensor[:,1], device= device)
 
     return prior
 
@@ -695,4 +676,4 @@ class TruncatedNormal(TruncatedStandardNormal):
         return self._from_std_rv(super(TruncatedNormal, self).icdf(value))
 
     def log_prob(self, value):
-        return super(TruncatedNormal, self).log_prob(self._to_std_rv(value)) - self._log_scale
+        return super(TruncatedNormal, self).log_prob(self._to_std_rv(value)) - self._log_scale\
