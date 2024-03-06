@@ -30,6 +30,7 @@ def fit_silkscreen_model(
     lr_flow = 1e-4,
     lr_cnn = 1e-4,
     lr_mod = 0.1,
+    freeze_cnn = False,
     norm_func: Optional[Callable] =  lambda x: x,
     n_jobs = 1,
     )-> NeuralInference:
@@ -77,24 +78,30 @@ def fit_silkscreen_model(
     
     inference =  SNPE(prior = prior, density_estimator = nde, device = device)
     
-    default_train_kwargs = {'training_batch_size':150,'clip_max_norm': 7,'learning_rate':1e-4, 'validation_fraction':0.1,'stop_after_epochs': 20} #Default training hyperparameters
+    default_train_kwargs = {'training_batch_size':150,'clip_max_norm': 7,'learning_rate':1e-4, 'validation_fraction':0.1,'stop_after_epochs': 20, 'retrain_from_scratch':False} #Default training hyperparameters
     default_train_kwargs.update(train_kwargs)
-
+    retrain = default_train_kwargs.pop('retrain_from_scratch')
     data_as_tensor = torch.Tensor(observation.data)
+    
+    def def_global_sim_func():
+        global gloabl_sim_func
+        
+        if inject_image is not None:
+            inject_data = parse_input_file(inject_image,output='torch')
+            def global_sim_func(*x):
+                t = torch.stack(x).view(-1)
+                im = sim_class.get_image_for_injec(t,output = 'torch') + get_injec_cutouts(1,observation.im_dim, array = inject_data, output = 'torch').squeeze()
+                return norm_func( im )
+    
+        else:
+            def global_sim_func(x):
+                t = torch.stack(x).view(-1)
+                im = sim_class.get_image(t, output = 'torch')
+                return norm_func(im)
+        return global_sim_func
+    
+    sim_func = def_global_sim_func()
 
-    if inject_image is not None:
-        inject_data = parse_input_file(inject_image,output='torch')
-        def sim_func(t):
-            t = t.view(-1)
-            im = sim_class.get_image_for_injec(t,output = 'torch') + get_injec_cutouts(1,observation.im_dim, array = inject_data, output = 'torch').squeeze()
-            return norm_func( im )
-    
-    else:
-        def sim_func(t): 
-            t = t.view(-1)
-            im = sim_class.get_image(t, output = 'torch')
-            return norm_func(im)
-    
     if isinstance(num_sim, Iterable): assert len(num_sim) == rounds
 
     for r in range(rounds):
@@ -107,8 +114,9 @@ def fit_silkscreen_model(
             
             samples = []
             log_prob = []
-            for j in range(int(50000/32) +1):
-                samples.append( posterior.sample((32,),show_progress_bars = False, ) )
+            max_sample = 256
+            for j in range(int(50_000 / max_sample) +1):
+                samples.append( posterior.sample((max_sample,),show_progress_bars = False, ) )
                 log_prob.append(  posterior.log_prob(samples[-1]) )
             log_probs = torch.stack(log_prob).flatten()
             log_prob_threshold = log_probs.sort()[0][int(log_probs.shape[0]*5e-4)]
@@ -119,7 +127,7 @@ def fit_silkscreen_model(
                 return predictions.bool()
             
             proposal = RestrictedPrior(prior, accept_reject_fn, sample_with="rejection",device=device)
-            sampling_kwargs = dict(max_sampling_batch_size = 32,show_progress_bars = False)
+            sampling_kwargs = dict(max_sampling_batch_size = max_sample,show_progress_bars = False)
         
         num_r = num_sim[r] if isinstance(num_sim, Iterable) else num_sim
 
@@ -128,15 +136,20 @@ def fit_silkscreen_model(
             theta_cur,x_cur = parse_torch_sim_file(pre_simulated_file)
         else:
             theta_cur,x_cur = run_sims(sim_func, proposal, num_r, n_jobs = n_jobs, samp_kwargs = sampling_kwargs )
-            
+        print('run sims done')
+        gc.collect()
         append_sims_kwargs = {'proposal':proposal, 'data_device':data_device}
-        
-        max_append = 10_000 # For memory reasons, only append 10_000 at a time
+       
+        if r == 0:
+            max_append = 20_000
+        else:
+            max_append = 15_000 # For memory reasons, only append 10_000 at a time in later rounds
         num_r_append = int(num_r/max_append)
 
         if num_r_append == 0:
             inference.append_simulations(theta_cur,x_cur,**append_sims_kwargs)
-            _ = inference.train(max_num_epochs = -1,**default_train_kwargs) # Run to initialize optimizer
+            if r == 0:
+                _ = inference.train(max_num_epochs = -1,**default_train_kwargs) # Run to initialize NN
 
         else:
             for r_append in range(num_r_append):
@@ -144,36 +157,39 @@ def fit_silkscreen_model(
                 max_ind = (r_append+1)*max_append
                 inference.append_simulations(theta_cur[min_ind:max_ind],x_cur[min_ind:max_ind],**append_sims_kwargs)
                 if r_append == 0 and r == 0:
-                    _ = inference.train(max_num_epochs = -1, force_first_round_loss= True,**default_train_kwargs) # Run to initialize optimizer
-
+                    _ = inference.train(max_num_epochs = -1, force_first_round_loss= True,**default_train_kwargs) # Run to initialize NN
             if num_r%max_append != 0:
-                inference.append_simulations(theta_cur[max_ind:],x_cur[max_ind:],**append_sims_kwargs)
+                inference.append_simulations(theta_cur[max_ind:],x_cur[max_ind:], **append_sims_kwargs)
 
-        
+        print (inference._data_round_index)
+
         if save_sims and not (pre_simulated_file is not None and r == 0):
             torch.save([theta_cur,x_cur],f'{save_dir}sims_round_{r}.pt')
 
         del theta_cur,x_cur
+        gc.collect()
         
+        w_decay_cnn = 1e-4
+        w_decay_flow = 1e-6
         
-        w_decay_cnn = 1e-5
-        w_decay_flow = 1e-5
         #Trick sbi using 'force_first_round_loss'
-        
+        print ('Starting Training')
         if r==0:
             optim_params = [{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow, 'weight_decay':w_decay_flow},
                             {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn, 'weight_decay':w_decay_cnn}]
+            inference.optimizer = optim.AdamW(optim_params, lr=1e-4)
         else:
-            optim_params = [{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow*lr_mod, 'weight_decay':w_decay_flow},
-                            {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn*lr_mod, 'weight_decay':w_decay_cnn}]
-        
-        inference.optimizer = optim.AdamW(optim_params, lr=1e-4)        
-        
-        if r == 0:
-            density_estimator = inference.train(force_first_round_loss=True, resume_training= True, **default_train_kwargs)
-        else:
-            density_estimator = inference.train(force_first_round_loss=True,discard_prior_samples = True, **default_train_kwargs)
+            _ = inference.train(max_num_epochs = -1,force_first_round_loss = True,retrain_from_scratch = retrain, **default_train_kwargs) # Run to reset round and initialize optimizer
             
+            if freeze_cnn:
+                inference.optimizer = optim.AdamW(inference._neural_net._transform.parameters(), lr=lr_flow*lr_mod, weight_decay = w_decay_flow )
+            else:
+                lr_mod_cur = float(lr_mod )
+                optim_params = [{'params': inference._neural_net._transform.parameters(), 'lr': lr_flow*lr_mod_cur, 'weight_decay':w_decay_flow},
+                                {'params': inference._neural_net._embedding_net.parameters(), 'lr': lr_cnn*lr_mod_cur, 'weight_decay':w_decay_cnn}]
+                inference.optimizer = optim.AdamW(optim_params, lr=1e-4)
+        
+        density_estimator = inference.train(force_first_round_loss=True, resume_training = True, **default_train_kwargs)
         posterior = inference.build_posterior(density_estimator)
         
         if save_posterior:

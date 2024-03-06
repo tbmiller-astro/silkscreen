@@ -20,10 +20,16 @@ default_sersic_dict = {'n':0.7, 'r_eff_as':10, 'theta': 0,'ellip':0,'dx':0,'dy':
 
 def run_sims(sim_func, proposal, num, n_jobs = 1, samp_kwargs = {}) -> torch.Tensor:
     theta = proposal.sample((num,), **samp_kwargs).to('cpu')# Always need on cpu
-    to_mpire = lambda *x: sim_func(torch.stack(x))
-    with mpire.WorkerPool(n_jobs=n_jobs) as pool:
-        x = pool.map(to_mpire, theta, progress_bar = True)
-    x = torch.stack(x)
+    theta_to_samp = [t for t in theta]
+
+    with mpire.WorkerPool(n_jobs) as pool:
+        x = []
+        for result in pool.imap(sim_func,theta_to_samp,progress_bar = True, chunk_size = 500, max_tasks_active = 2500):
+            x.append(result)
+    
+    print ('done with worker pool')
+    x = torch.stack(x).to('cpu')
+    print ('done with stacking')
     return theta,x
 
 def parse_input_file(location, output = 'torch'):
