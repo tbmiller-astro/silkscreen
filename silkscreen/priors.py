@@ -117,6 +117,7 @@ def build_mzr_dist(logMs_range, device):
 def get_default_dwarf_fixed_age_prior(
         D_range: Iterable,
         logMs_range: Iterable,
+        Ayoung_range: Iterable = [0.5,3],
         device: Optional[str] = 'cpu'
     )-> torch.distributions.distribution.Distribution:
     
@@ -124,7 +125,7 @@ def get_default_dwarf_fixed_age_prior(
     D_dist = build_uniform_dist(D_range, device)
     M_and_Z_dist = build_mzr_dist(logMs_range, device)
     fy_dist = build_truncnorm_dist(0, 0.05, [0.,0.2], device )
-    ay_n_dist = build_uniform_dist([0.5,2.5], device)
+    ay_n_dist = build_uniform_dist(Ayoung_range, device)
 
     fm_dist = build_truncnorm_dist(0.4, 0.2, [0.,0.8], device )
     prior = MultipleIndependent([D_dist,M_and_Z_dist,fy_dist, ay_n_dist, fm_dist])
