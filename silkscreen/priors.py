@@ -177,6 +177,31 @@ def get_new_dwarf_fixed_age_prior(
 
     return prior
 
+def get_dwarf_four_pop_fixed_age_prior(
+    D_range: Iterable,
+    logMs_range: Iterable,
+    Fvy_range: Iterable = [0.0, 0.05],
+    Fy_range: Iterable = [0.0, 0.05],
+    Fm_range: Iterable = [0.15, 0.2],
+    device: Optional[str] = "cpu",
+) -> torch.distributions.distribution.Distribution:
+    D_dist = build_uniform_dist(D_range, device)
+    M_and_Z_dist = build_mzr_dist(logMs_range, device)
+    fvy_dist = build_uniform_dist(
+        Fvy_range, device
+    )  # sample f_y uniform between 0 and 5% of mass
+    fy_dist = build_uniform_dist(
+        Fy_range, device
+    )  # sample f_y uniform between 0 and 5% of mass
+    fm_dist = build_uniform_dist(
+        Fm_range, device
+    )  # sample f_m uniform between 10 and 20%
+    # F_old will be 1 - f_y - f_m
+    # no longer sample Ay; all ages will be fixed
+
+    prior = MultipleIndependent([D_dist, M_and_Z_dist, fvy_dist, fy_dist, fm_dist])
+
+    return prior
 
 def get_SSP_prior(
     D_range: Iterable,
