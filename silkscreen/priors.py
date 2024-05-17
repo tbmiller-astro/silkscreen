@@ -158,14 +158,14 @@ def get_default_dwarf_fixed_age_prior(
 def get_new_dwarf_fixed_age_prior(
     D_range: Iterable,
     logMs_range: Iterable,
-    Fy_range: Iterable = [0.0, 0.05],
+    Fy_range: Iterable = [0.0, 0.1],
     Fm_range: Iterable = [0.15, 0.2],
     device: Optional[str] = "cpu",
 ) -> torch.distributions.distribution.Distribution:
     D_dist = build_uniform_dist(D_range, device)
     M_and_Z_dist = build_mzr_dist(logMs_range, device)
-    fy_dist = build_uniform_dist(
-        Fy_range, device
+    fy_dist = build_truncnorm_dist(
+        0., Fy_range[1]/4., Fy_range, device
     )  # sample f_y uniform between 0 and 5% of mass
     fm_dist = build_uniform_dist(
         Fm_range, device
