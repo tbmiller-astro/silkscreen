@@ -345,10 +345,11 @@ class DefaultDwarfFixedAgeSimmer(ArtpopSimmer):
 class NewDwarfFixedAgeSimmer(ArtpopSimmer):
     "Class to simulate the default dwarf model with 3 components with fixed ages, with shared metallicity"
 
-    def __init__(self, obs_object: SilkScreenObservation, age_y_100myr: float = 2.5):
+    def __init__(self, obs_object: SilkScreenObservation, age_y_100myr: float = 1., Z_offset: float = 0.):
         super().__init__(obs_object)
 
         self.age_y_100myr = age_y_100myr
+        self.Z_offset = Z_offset
         self.N_free = 5
         self.param_descrip = [
             "D (Mpc)",
@@ -368,10 +369,50 @@ class NewDwarfFixedAgeSimmer(ArtpopSimmer):
 
         f_o = 1.0 - f_m - f_y
 
-        ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
-        ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z, logAge_m)
+        ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z + self.Z_offset, logAge_y )
+        ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-6), D, Z + self.Z_offset, logAge_m )
         ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
         sp_comb = ssp_y + ssp_m + ssp_o
+        return sp_comb
+
+class ContYoungDwarfSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 3 components with fixed ages, with shared metallicity"
+
+    def __init__(self, obs_object: SilkScreenObservation, age_range_100myr: Iterable = (0.5,2.5), N_cont: int = 12, Z_offset: float = 0.):
+        super().__init__(obs_object)
+
+        self.age_range_100myr = age_range_100myr
+        self.N_cont = N_cont
+        self.age_list = np.linspace(self.age_range_100myr[0], self.age_range_100myr[1], num = N_cont)
+        self.Z_offset = Z_offset
+        self.N_free = 5
+        self.param_descrip = [
+            "D (Mpc)",
+            "logMs",
+            "Z",
+            "F_y",
+            "F_m",
+        ]
+
+    def build_sp(self, x):
+        D, logM, Z, f_y, f_m = x.tolist()
+
+        # Fixed ages for the old, medium, and young components
+        logAge_m = np.log10(1.5) + 9.0  # 1.5 Gyr component
+        logAge_o = np.log10(10.0) + 9.0  # 10 Gyr component
+
+        f_o = 1.0 - f_m - f_y
+
+        ssp_m = self.build_ssp(logM + np.log10(f_m + 1e-7), D, Z + self.Z_offset, logAge_m)
+        ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-7), D, Z, logAge_o)
+
+        sp_comb = ssp_m + ssp_o
+
+        f_y_each = f_y/float(self.N_cont)
+        for age in self.age_list:
+            logAge_cur = np.log10(age) + 8.
+            ssp_cur = self.build_ssp(logM + np.log10(f_y_each + 1e-7), D, Z + self.Z_offset, logAge_cur )
+            sp_comb = sp_comb + ssp_cur
         return sp_comb
 
 class DwarfFourPopFixedAgeSimmer(ArtpopSimmer):
