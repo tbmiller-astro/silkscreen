@@ -114,12 +114,12 @@ def fit_silkscreen_model(
             
             samples = []
             log_prob = []
-            max_sample = 256
-            for j in range(int(50_000 / max_sample) +1):
+            max_sample = 512
+            for j in range(int(100_000 / max_sample) +1):
                 samples.append( posterior.sample((max_sample,),show_progress_bars = False, ) )
                 log_prob.append(  posterior.log_prob(samples[-1]) )
             log_probs = torch.stack(log_prob).flatten()
-            log_prob_threshold = log_probs.sort()[0][int(log_probs.shape[0]*5e-4)]
+            log_prob_threshold = log_probs.sort()[0][int(log_probs.shape[0]*1e-4)]
             
             def accept_reject_fn(theta):
                 theta_log_probs = posterior.log_prob(theta)
