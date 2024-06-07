@@ -11,11 +11,11 @@ from torch.distributions import Uniform
 
 
 class MZRPrior:
-    def __init__(self, logM_bounds, frac_expand=1.5, device="cpu"):
+    def __init__(self, logM_bounds, frac_expand=1.5, Z_bounds = [-2.25,0.5], device="cpu"):
         self.logM_bounds = logM_bounds
         self.logM_dist = build_uniform_dist(logM_bounds, device)
         self.MZR_sig = 0.17 * frac_expand
-        self.Z_bounds = [-2.25, 0.5]
+        self.Z_bounds = Z_bounds
         self.device = device
 
     # def MZR(self, logM): ## COMMENTED OUT AS A SUGGESTED CHANGE
@@ -130,9 +130,9 @@ def build_truncnorm_dist(loc, scale, bounds, device):
 
 
 def build_mzr_dist(logMs_range, device):
-    custom_dist = MZRPrior(logMs_range, device=device)
+    custom_dist = MZRPrior(logMs_range, device=device,Z_bounds = [-2.25, -0.25])
     lb = torch.tensor([logMs_range[0], -2.25]).to(device)
-    ub = torch.tensor([logMs_range[1], 0.5]).to(device)
+    ub = torch.tensor([logMs_range[1], -0.25]).to(device)
     return CustomPriorWrapper(
         custom_dist, event_shape=torch.Size([2]), lower_bound=lb, upper_bound=ub
     )
@@ -159,7 +159,7 @@ def get_new_dwarf_fixed_age_prior(
     D_range: Iterable,
     logMs_range: Iterable,
     Fy_range: Iterable = [0.0, 0.1],
-    Fm_range: Iterable = [0.15, 0.2],
+    Fm_range: Iterable = [0., 0.2],
     device: Optional[str] = "cpu",
 ) -> torch.distributions.distribution.Distribution:
     D_dist = build_uniform_dist(D_range, device)
