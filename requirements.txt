@@ -3,3 +3,6 @@ numpy
 torch
 sbi>=0.18
 artpop>=0.1.1
+matplotlib
+mpire
+tqdm

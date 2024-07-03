@@ -1,10 +1,6 @@
 ``silkscreen``
 --------------
 
-The basic idea of [silkscreen](https://www.castlefineart.com/blog/all-about-silkscreens) is to use simulation based inference combined with [``artpop``](https://github.com/ArtificialStellarPopulations/ArtPop) to infer properties of dwarf galaxies directly from their images. The original goal was to accurately measure distances in the semi-resolved regime but it can also be used to infer metallicites and star-formation histories. Check back soon for a more detailed tutorial!
+The concept of [silkscreen](https://www.castlefineart.com/blog/all-about-silkscreens) is to use simulation based inference combined with [``artpop``](https://github.com/ArtificialStellarPopulations/ArtPop) to infer properties of galaxies directly from their images. The main initial goal is the measure the distances of galaxies using only their broadband cutouts, but the possibilities are endless! Many more details about the current implementation are contained in the paper (which will be arriving on the arXiv soon!)
 
-:construction: :construction:  :construction: :construction: :construction: 
-
-This package is still under active development and testing and should not be used in its current state. Please check back soon for updates!
-
-:construction: :construction:  :construction: :construction: :construction: 
+Unfortunately the code is not particularly use friendly at the current moment. The best place to start is the read through the paper, which goes into much more detail, and look at the ``docs/basic_workflow.py`` for a basic practical implementation. We plan on improving this in the future but if you have questions or issues about using the code now then please contact us either by raising an issue here or directly by email!

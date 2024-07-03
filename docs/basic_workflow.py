@@ -1,28 +1,39 @@
 ##What Tim's basic workflow has looked like
 import torch
-from silkscreen import utils
-from silkscreen import simmer
-from silkscreen.fitter import SilkScreenFitter
-from sbi.utils.get_nn_models import posterior_nn
+import silkscreen
+from silkscreen.neural_nets import build_default_NN
 
-# Need to re-do this but shouldn't be too hard
+device = 'cuda' if torch.cuda.is_available() else 'cpu' # GPU is needed for training
 
 #Load data
-x_obs = torch.load('SOME/PATH/TO/data.pt')
+x_obs = torch.load('SOME/PATH/TO/CUTOUT.pt')
+psfs =  torch.load('SOME/PATH/TO/PSFs.pt')
 
-#initialize simmer
-simmer = simmer.SersicSSPSimmer( utils.get_DECam_imager(),['DECam_g','DECam_r','DECam_z'], [30,30,60],(101,101), 0.262)
+ser_dict = torch.load('SOME/PATH/TO/sersic_param_dict.pt') # Dictionary with parameters specifying morphology
 
-#initialize NN
-enet = utils.Default_NN(num_filt = 3,nout = 16, im_size = (101,101),dropout_p = 0.)
-nde = posterior_nn('nsf',embedding_net=enet, z_score_theta='none', z_score_x='none')
-prior = utils.get_default_prior([1,2],[6,8])
+# Basic setup for DECaLs images
+iso_kwargs = dict(mag_limit=27, mag_limit_band='DECam_r') #magnitude limit for artpop to resolve individual stars
+obs = silkscreen.SilkScreenObservation(data = x_obs, imager = 'DECam', filters = ['DECam_g','DECam_r', 'DECam_z'], sky_sb = [ 22.04, 20.91, 18.46],
+exp_time = [87*2,67*2,100*2], pixel_scale = 0.262, zpt = 22.5, psf = psfs, distribution= 'sersic', distribution_kwargs=ser_dict, iso_kwargs=iso_kwargs,)
 
-#Put it all together into the fitter class
-fitter = SilkScreenFitter(simmer.get_image, nde, x_obs, prior, device = 'cpu')
+prior = silkscreen.priors.get_new_dwarf_fixed_age_prior(
+    D_range=[1.5, 9.],
+    logMs_range=[6., 8.],
+    Fy_range=[0.0, 0.1],
+    Fm_range=[0., 0.2],
+    device=device,
+) # Example of prior used in the initial paper
 
-#Sim models and Train
-posterior = fitter.train_model(rounds = 3, num_sim = [int(1e4),int(5e3),int(5e3)])
+simmer_use = silkscreen.simmer.ContYoungDwarfSimmer # Simulator used in paper
 
-##Then save the final posterior
-fitter.pickle_posterior('PATH/TO/SAVE/posterior.pkl')
+
+#Specify training setup
+nde = build_default_NN(num_filter=3, num_summary = 16)
+num_sim = [25_000]*4
+train_kwargs = {'retrain_from_scratch':False, 'discard_prior_samples':False, 'training_batch_size': 256}
+
+
+infer = silkscreen.fit_silkscreen_model(obs,simmer_use , nde, prior, 4, num_sim , inject_image= 'for_inj.pt', # file containing large patch of sky to inject simulated images into
+    device = device, data_device = 'cpu',n_jobs = 5, save_dir = './silkscreen_results/', save_posterior = True,lr_cnn = 5e-6, lr_flow = 2e-4, lr_mod = 1., train_kwargs = train_kwargs, norm_func = torch.asinh)
+
+torch.save(infer.summary,'./silkscreen_results/training_summary.pt')
