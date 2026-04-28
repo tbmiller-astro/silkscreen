@@ -151,11 +151,12 @@ class ArtpopSimmer(ArtpopIsoLoader):
     def build_sp(self, x):
         raise NotImplementedError
 
-    def build_source(self, x: torch.Tensor):
+    def build_source(self, x: torch.Tensor, dist_kwargs = {}):
         sp_use = self.build_sp(x)
         defaults_kwargs = {"theta": 0, "ellip": 0, "dx": 0, "dy": 0}
         if self.obs_object.distribution.lower() == "sersic":
             ser_param = {**defaults_kwargs, **self.obs_object.distribution_kwargs}
+            ser_param.update(dist_kwargs)# Update if provided, if not default to what was built in
             ser_param["r_eff_kpc"] = (
                 ser_param["r_eff_as"]
                 * np.pi
@@ -178,6 +179,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
 
         elif self.obs_object.distribution.lower() == "plummer":
             plummer_param = {**defaults_kwargs, **self.obs_object.distribution_kwargs}
+            ser_param.update(dist_kwargs) # Update if provided, if not default to what was built in
             plummer_param["scale_radius_kpc"] = (
                 plummer_param["scale_radius_as"]
                 * np.pi
@@ -230,9 +232,9 @@ class ArtpopSimmer(ArtpopIsoLoader):
         return im_cur
 
     def get_image(
-        self, x: torch.Tensor, num_shuffle: Optional[int] = 1, output="numpy"
+        self, x: torch.Tensor, num_shuffle: Optional[int] = 1, output="numpy", dist_kwargs = {},
     ):
-        src_cur = self.build_source(x)
+        src_cur = self.build_source(x, dist_kwargs=dist_kwargs)
 
         xy_to_shuffle = src_cur.xy.copy()
 
@@ -254,13 +256,13 @@ class ArtpopSimmer(ArtpopIsoLoader):
             img_list = torch.from_numpy(img_list.astype(np.float32)).type(torch.float)
         return img_list
 
-    def get_image_for_injec(self, x, num_shuffle=1, output="numpy"):
+    def get_image_for_injec(self, x, num_shuffle=1, output="numpy", dist_kwargs = {}):
         # Same as above but us ideal imager instead
-        # This isn't truly correcy and will underestimate noise if galaxy counts ~ sky counts
+        # This isn't truly correct and will underestimate noise if galaxy counts ~ sky counts
         # But for most of our setups this shouldn't be the case although important to check
-        # Could maybe add a option to use Poisson noise if neeeded
+        # Could maybe add a option to use Poisson noise if needed
 
-        src_cur = self.build_source(x)
+        src_cur = self.build_source(x, dist_kwargs=dist_kwargs)
 
         xy_to_shuffle = src_cur.xy.copy()
 
@@ -505,4 +507,48 @@ class DefaultDwarfTwoPopSimmer(ArtpopSimmer):
         ssp_y = self.build_ssp(logM + np.log10(f_y + 1e-6), D, Z, logAge_y)
         ssp_o = self.build_ssp(logM + np.log10(f_o + 1e-6), D, Z, logAge_o)
         sp_comb = ssp_y + ssp_o
+        return sp_comb
+
+def sigmoid(x):
+    return 1./( np.exp(-x) + 1)
+
+class DwarfSigmoidLinearSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 2 components with shared metallicity"
+    def __init__(self, obs_object: SilkScreenObservation, time_first = 12, time_last = 0.05, N_ssps = 20):
+        super().__init__(obs_object)
+        self.time_first = time_first
+        self.time_last = time_last
+        self.N_ssps = N_ssps
+        self.time_bins = np.linspace(self.time_first, self.time_last, num = self.N_ssps
+                                     )
+
+        self.N_free = 5
+        self.param_descrip = ["D (Mpc)", "logMs", "Z", "SFH_a", "SFH_b"]
+
+    def SFH_func(self, t, a,b, t0 = 8):
+        return sigmoid( b - a*(t-t0) )
+    
+    def build_sp(self, x):
+        D, logM, Z, sfh_a, sfh_b = x.tolist()
+        
+        #Build oldest age component
+        F_first = self.SFH_func(self.time_first, sfh_a, sfh_b)
+        sp_comb = self.build_ssp(logM + np.log10(F_first + 1e-7), D, Z, np.log10(self.time_first)+9)
+        
+        #Loop through time bins and build each ssp
+        for j in range(1,len(self.time_bins)):
+            age = self.time_bins[j]
+            age_last = self.time_bins[j-1]
+            med_age = (age + age_last)/2
+            F_cur = self.SFH_func(age, sfh_a, sfh_b) - self.SFH_func(age_last, sfh_a, sfh_b)
+            logAge_cur = np.log10(med_age) + 9.
+            ssp_cur = self.build_ssp(logM + np.log10(F_cur + 1e-7), D, Z, logAge_cur )
+            sp_comb = sp_comb + ssp_cur
+        
+        #Final young component is 25 Myr old
+        F_cur = 1. - self.SFH_func(age_last, sfh_a, sfh_b)
+        logAge_cur = np.log10(0.025) + 9.
+        ssp_cur = self.build_ssp(logM + np.log10(F_cur + 1e-7), D, Z, logAge_cur )
+        sp_comb = sp_comb + ssp_cur
+        
         return sp_comb
