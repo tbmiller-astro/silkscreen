@@ -147,6 +147,8 @@ class ArtpopSimmer(ArtpopIsoLoader):
         super().__init__(
             self.obs_object.imager.phot_system, **self.obs_object.iso_kwargs
         )
+        self.ideal_imager = artpop.IdealImager()
+        self.ideal_psf = artpop.gaussian_psf(fwhm=1., pixel_scale=1., mode = 'oversample', factor=25)
 
     def build_sp(self, x):
         raise NotImplementedError
@@ -230,6 +232,29 @@ class ArtpopSimmer(ArtpopIsoLoader):
             zpt=cur_zpt,
         )
         return im_cur
+    
+    def get_artpop_ideal_obs(self,src, filt_ind):
+        filt_cur = self.obs_object.filters[filt_ind]
+        ## Check to get the right properties
+        cur_exp_time = (
+            self.obs_object.exp_time[filt_ind]
+            if isinstance(self.obs_object.exp_time, Iterable)
+            else self.obs_object.exp_time
+        )
+
+        cur_zpt = (
+            self.obs_object.zpt[filt_ind]
+            if isinstance(self.obs_object.zpt, Iterable)
+            else self.obs_object.zpt
+        )
+
+        im_cur = self.ideal_imager.observe(
+            src,
+            filt_cur,
+            psf=self.ideal_psf,
+            zpt=cur_zpt,
+        )
+        return im_cur
 
     def get_image(
         self, x: torch.Tensor, num_shuffle: Optional[int] = 1, output="numpy", dist_kwargs = {},
@@ -256,7 +281,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
             img_list = torch.from_numpy(img_list.astype(np.float32)).type(torch.float)
         return img_list
 
-    def get_image_for_injec(self, x, num_shuffle=1, output="numpy", dist_kwargs = {}):
+    def get_image_for_injec(self, x, num_shuffle=1, output="numpy", dist_kwargs = {}, return_ideal = False):
         # Same as above but us ideal imager instead
         # This isn't truly correct and will underestimate noise if galaxy counts ~ sky counts
         # But for most of our setups this shouldn't be the case although important to check
@@ -267,8 +292,10 @@ class ArtpopSimmer(ArtpopIsoLoader):
         xy_to_shuffle = src_cur.xy.copy()
 
         img_list = []
+        ideal_list = []
         for i in range(num_shuffle):
             cur_shuf_list = []
+            ideal_shuf_list = []
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
             for j, filt_cur in enumerate(self.obs_object.filters):
@@ -283,15 +310,32 @@ class ArtpopSimmer(ArtpopIsoLoader):
                     * im_cur.calibration
                 )
                 cur_shuf_list.append(im_w_src_p_noise)
-
+                if return_ideal:
+                    im_ideal = self.get_artpop_ideal_obs(src_cur, j)
+                    ideal_shuf_list.append(im_ideal.image)
             img_list.append(cur_shuf_list)
+            ideal_list.append(ideal_shuf_list)
 
         if self.obs_object.extinction_reddening is not None:
             img_list *= self.obs_object.extinction_reddening[:, None, None]
+            if return_ideal:
+                ideal_list *= self.obs_object.extinction_reddening[:, None, None]
+        
         img_list = np.asarray(img_list).squeeze()
+        if return_ideal:
+            ideal_list = np.asarray(ideal_list).squeeze()
+        
         if output == "torch":
             img_list = torch.from_numpy(img_list.astype(np.float32)).type(torch.float)
-        return img_list
+            if return_ideal:
+                ideal_list = torch.from_numpy(ideal_list.astype(np.float32)).type(torch.float)
+       
+        if return_ideal:
+            return img_list,ideal_list
+        
+        else:
+            return img_list
+
 
 
 ## Both types of simmers used in the original silkscreen paper
