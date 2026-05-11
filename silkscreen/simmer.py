@@ -299,17 +299,9 @@ class ArtpopSimmer(ArtpopIsoLoader):
             np.random.shuffle(xy_to_shuffle)
             src_cur.xy = xy_to_shuffle
             for j, filt_cur in enumerate(self.obs_object.filters):
-                im_cur = self.get_artpop_obs(src_cur, j)
-                counts_to_use = im_cur.src_counts
-                counts_to_use[counts_to_use < 1e-8] = (
-                    1e-8  # Make sure no below zero, happens sometimes with bright stars if PSF is noisy
-                )
-
-                im_w_src_p_noise = (
-                    np.random.normal(loc=counts_to_use, scale=np.sqrt(counts_to_use))
-                    * im_cur.calibration
-                )
-                cur_shuf_list.append(im_w_src_p_noise)
+                obs_cur = self.get_artpop_obs(src_cur, j)
+                im_cur = obs_cur.image
+                cur_shuf_list.append(im_cur)
                 if return_ideal:
                     im_ideal = self.get_artpop_ideal_obs(src_cur, j)
                     ideal_shuf_list.append(im_ideal.image)
