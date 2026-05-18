@@ -6,9 +6,9 @@ import astropy.units as u
 import numpy as np
 import torch
 from astropy.table import Table
-
+from astropy.cosmology import Planck18 as cosmo
+from scipy.stats import norm
 from .observation import SilkScreenObservation
-
 
 class ArtpopIsoLoader:
     def __init__(
@@ -173,7 +173,7 @@ class ArtpopSimmer(ArtpopIsoLoader):
                 ser_param["ellip"],
                 self.obs_object.im_dim,
                 self.obs_object.pixel_scale,
-                num_r_eff=10,
+                num_r_eff=5,
                 dx=ser_param["dx"],
                 dy=ser_param["dy"],
                 labels=None,
@@ -586,5 +586,64 @@ class DwarfSigmoidLinearSimmer(ArtpopSimmer):
         logAge_cur = np.log10(0.025) + 9.
         ssp_cur = self.build_ssp(logM + np.log10(F_cur + 1e-7), D, Z, logAge_cur )
         sp_comb = sp_comb + ssp_cur
+        
+        return sp_comb
+
+def tmax_tau_to_mu_sig(t_max, tau):
+    # tau from the FWHM equation: T_FWHM = t_max * 2 * sinh(tau * sqrt(2*ln2))
+    # => tau = arcsinh(T_FWHM / (2 * t_max)) / sqrt(2 * ln2)
+    sig = np.arcsinh(tau / (2.0 * t_max)) / np.sqrt(2*np.log(2))
+
+    # T0 from the mode equation: t_max = exp(T0 - tau^2)
+    # => T0 = ln(t_max) + tau^2
+    mu = np.log(t_max) + sig**2
+ 
+    return mu, sig
+
+AGE_UNIVERSE_GYR = cosmo.age(0).value
+
+class LogNormalSimmer(ArtpopSimmer):
+    "Class to simulate the default dwarf model with 2 components with shared metallicity"
+    def __init__(self, obs_object: SilkScreenObservation, time_first = 13, time_last = 0.05, N_ssps = 20):
+        super().__init__(obs_object)
+        self.time_first = time_first
+        self.time_last = time_last
+        self.N_ssps = N_ssps
+        self.time_bins = np.linspace(self.time_first, self.time_last, num = self.N_ssps)
+
+        self.N_free = 5
+        self.param_descrip = ["D (Mpc)", "logMs", "Z", "T_max", "tau"]
+
+    def SFH_func(self, age, Tmax,tau):
+        mu,sig = tmax_tau_to_mu_sig(Tmax, tau)
+        t_uni = AGE_UNIVERSE_GYR - age
+        x = (np.log(t_uni)-mu)/sig
+        return norm().cdf(x)
+    
+    def build_sp(self, x):
+        D, logM, Z, T_max, tau = x.tolist()
+        
+        #Build oldest age component
+        F_first = self.SFH_func(self.time_first, T_max, tau)
+        sp_comb = self.build_ssp(logM + np.log10(F_first + 1e-7), D, Z, np.log10(self.time_first)+9)
+        
+        #Loop through time bins and build each ssp
+        for j in range(1,len(self.time_bins)):
+            age = self.time_bins[j]
+            age_last = self.time_bins[j-1]
+            med_age = (age + age_last)/2
+            F_cur = self.SFH_func(age, T_max, tau) - self.SFH_func(age_last, T_max, tau)
+            logAge_cur = np.log10(med_age) + 9.
+            ssp_cur = self.build_ssp(logM + np.log10(F_cur + 1e-7), D, Z, logAge_cur )
+            sp_comb = sp_comb + ssp_cur
+        
+        #Final young component is 25 Myr old
+        F_young = 1. - self.SFH_func(self.time_last, T_max, tau)
+        age_young = [0.05,0.045,0.04,0.035,0.03,0.025,0.2,0.015,0.01,0.005]
+        F_young_each = F_young/len(age_young)
+        for age_young_cur in age_young:
+            logAge_cur = np.log10(age_young_cur) + 9.
+            ssp_cur = self.build_ssp(logM + np.log10(F_young_each + 1e-7), D, Z, logAge_cur )
+            sp_comb = sp_comb + ssp_cur
         
         return sp_comb
